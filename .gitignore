@@ -1,0 +1,48 @@
+# Secrets (NEVER commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+client_secret*.json
+service-account*.json
+secrets/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# Local data and databases
+*.db
+*.sqlite
+*.sqlite3
+chroma_db/
+.chroma/
+data/raw/
+data/filings/
+*.pdf
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code local files
+.claude/settings.local.json
+
+# Personal study notes (not for the public repo)
+docs/DEVLOG.md
+docs/INTERVIEW_PROGRESS.md
+docs/INTERVIEW_CHEATSHEET.md
