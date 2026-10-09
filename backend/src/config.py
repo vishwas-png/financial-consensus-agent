@@ -20,8 +20,20 @@ GROQ_API_KEY: str | None = os.getenv("GROQ_API_KEY")
 GOOGLE_CLIENT_ID: str | None = os.getenv("GOOGLE_CLIENT_ID")
 FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 
+def normalize_database_url(url: str) -> str:
+    """Make hosted Postgres URLs use the psycopg (v3) driver.
+
+    Neon/Render/Heroku hand out "postgres://..." or "postgresql://..."; SQLAlchemy would
+    otherwise pick the psycopg2 driver, which we don't install.
+    """
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 # Default to a local SQLite file inside backend/. In deployment this points to Postgres.
-DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'app.db'}")
+DATABASE_URL: str = normalize_database_url(os.getenv("DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'app.db'}"))
 
 # --- Model names (Groq) ---
 # Groq retired its Llama chat models (see DECISIONS D11/D23); both are open-weight gpt-oss models.

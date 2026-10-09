@@ -44,7 +44,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        Base.metadata.create_all(bind=session_factory.kw["bind"])  # create tables if missing
+        engine = session_factory.kw["bind"]
+        if engine.dialect.name == "sqlite":
+            # Local dev and tests: create tables if missing. Postgres (deployed) is managed
+            # only by Alembic migrations (`alembic upgrade head` runs before the server starts).
+            Base.metadata.create_all(bind=engine)
         with session_factory() as db:
             mark_stale_runs_failed(db)  # runs interrupted by the last shutdown can't resume
         yield
