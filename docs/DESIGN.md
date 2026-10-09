@@ -106,7 +106,7 @@ erDiagram
     run_events {
         int id PK
         string run_id FK
-        enum step "analyst|critic|auditor"
+        enum step "fetch_data|analyst|critic|consensus_check|auditor|error"
         json content
         datetime timestamp
     }
@@ -153,7 +153,7 @@ flowchart LR
 
 ## 9. Streaming
 
-`POST /research` creates a run (after the quota check) and returns its id. `GET /research/{id}/stream` opens an SSE stream; each graph step is saved as a `run_event` and pushed as an SSE message. `GET /history` lists the user's past runs.
+`POST /research` creates a run (after the quota check) and returns its id. `GET /research/{id}/stream` opens an SSE stream; each graph step is saved as a `run_event` and pushed as an SSE message. `GET /history` lists the user's past runs. Implementation details are in section 11.
 
 ## 10. Evaluation harness (Stage 5)
 
@@ -193,3 +193,48 @@ flowchart LR
   - The positive class is **ungrounded**: precision is "when it flags, is it right?" and recall is "how many planted flaws does it catch?".
   - It also reports **claim recall**: whether the auditor named the planted claim, not just the verdict.
   - With `--repeats N` it reports **agreement**: whether it gives the same verdict every time.
+
+## 11. API (Stage 6)
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant A as FastAPI (api/)
+    participant DB as DB
+    participant W as RunWorker thread
+    participant C as core/ graph
+    B->>A: POST /research {query} + Bearer ID token
+    A->>A: verify Google token -> user (create on first sign-in)
+    A->>DB: check quota (active runs, runs in last 24h)
+    A->>C: extract_ticker(query) (small model)
+    A->>DB: insert research_run (pending)
+    A->>W: submit(run_id, ticker, max_iterations)
+    A-->>B: 202 {run_id, ticker}
+    W->>DB: status = running
+    loop each graph step
+        W->>C: stream_research(ticker) (no user_id)
+        W->>DB: insert run_event (commit)
+    end
+    W->>DB: final_output, status = done / failed
+    B->>A: GET /research/{id}/stream + Bearer token (fetch, not EventSource)
+    loop every 0.5 s until finished
+        A->>DB: read status, then events after Last-Event-ID
+        A-->>B: event: <step>  data: {...}
+    end
+    A-->>B: event: end  data: {"status": "done"}
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /research` | Start a run: `{query, max_iterations≤3}` → 202 `{run_id, ticker}`. 401 / 422 / 429 / 503 on errors |
+| `GET /research/{id}/stream` | SSE: one event per graph step (`fetch_data`, `analyst`, `critic`, `consensus_check`, `auditor`, `error`), then `end`. Resumes from `Last-Event-ID` |
+| `GET /research/{id}` | Run detail: status, events, `final_output` |
+| `GET /history` | The user's runs, newest first (ticker, status, outcome, thesis) |
+| `GET /me` | User + quota usage |
+| `GET /health` | Liveness (no auth) |
+
+- **Auth:** every endpoint except `/health` requires `Authorization: Bearer <Google ID token>`. Another user's run id returns **404**, so the API doesn't confirm the run exists.
+- **Background worker:** a bounded in-process thread pool (`MAX_CONCURRENT_RUNS = 2`). Every graph step is committed as a `run_event`, so the stream can replay it and a reconnect can resume. On startup, runs still `pending`/`running` are marked failed with an error event, because the previous process can't resume them.
+- **Stream ordering detail:** each poll reads the run **status before** the new events. The worker commits every event before it marks the run finished, so a finished status guarantees all events are visible. The other order could end the stream one event early.
+- **Quota:** at most 1 active run and 5 runs per rolling 24 hours per user. It is checked before any LLM call. A failed ticker extraction creates no run and costs no quota.
+- **Failure messages:** errors are stored as a user-safe message plus the exception type, never a stack trace.
