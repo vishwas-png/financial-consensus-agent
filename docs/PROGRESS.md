@@ -35,3 +35,32 @@
 
 ### Next
 Stage 1: yfinance wrapper in `src/tools/market_data.py` returning raw Python objects (no LLM).
+
+## Stage 1: Data ingestion (yfinance, no LLM)
+
+### Approved plan
+1. **`src/tools/market_data.py`:** `fetch_market_data(ticker, ticker_factory=yf.Ticker) -> dict`. Validates via `MarketDataToolInput` before any network call; curated `INFO_FIELDS` mapping into `profile` / `price` / `valuation` / `financials`; `annual_financials` (up to 4 fiscal years, newest first); 1-year weekly `price_history`; `_clean()` makes everything JSON-safe. Exceptions: `MarketDataError` → `InvalidTickerError`, `TickerNotFoundError`, `DataSourceError`. CLI: `python -m src.tools.market_data AAPL`.
+2. **`tests/test_market_data.py`:** offline tests with a `FakeTicker`, plus one `@pytest.mark.live` test (skipped by default).
+3. **Config:** `yfinance` pinned in `requirements.txt`; `live` marker and `-m "not live"` default in `pytest.ini`.
+4. **Docs:** README status + commands, DECISIONS D12-D16, PROGRESS, local DEVLOG.
+5. **Git:** branch `stage/1-ingestion`; commits `chore(deps)…`, `feat(tools)…`, `docs…`; merge `--no-ff`, tag `stage-1-ingestion`, secret scan, push.
+6. **Out of scope:** the `fetch_data` graph node (Stage 3) and retry/backoff (Stage 8).
+
+### What was built
+| File | Purpose |
+|---|---|
+| `backend/src/tools/market_data.py` | yfinance wrapper, typed exceptions, JSON-safe output, CLI |
+| `backend/tests/test_market_data.py` | 15 offline tests + 1 live test |
+| `backend/requirements.txt` | + yfinance 1.7.0, pandas 3.0.6, numpy 2.5.3 |
+| `backend/pytest.ini` | `live` marker, offline by default |
+| `README.md`, `docs/DECISIONS.md` (D12-D17) | Docs |
+
+Changes from the plan (small): `annual_financials` uses `fiscal_year_end` (ISO date) instead of `year`, because fiscal years don't match calendar years (Apple's ends in September). The dividend yield field is named `dividend_yield_pct` (D17).
+
+### How it was tested
+- `pytest -q` → **51 passed, 1 deselected** (36 Stage 0 + 15 new).
+- `pytest -m live` → real AAPL fetch **passed**.
+- CLI: `AAPL` → full JSON, exit 0; `brk-b` → normalized to `BRK-B`, Berkshire data; `ZZZZQ` → `TickerNotFoundError`, exit 1; `RELIANCE.NS` and `ZZZZZZ` → `InvalidTickerError` before any network call, exit 1.
+
+### Next
+Stage 2: single Groq call with a Pydantic tool schema (`MarketDataToolInput`), rejecting malformed tool arguments. Needs `GROQ_API_KEY`.
