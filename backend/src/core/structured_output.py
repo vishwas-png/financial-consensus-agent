@@ -13,6 +13,7 @@ No finance logic lives here.
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -87,8 +88,13 @@ def call_with_schema(
     tool_name: str,
     description: str,
     model: str,
+    extra_check: Callable[[SchemaT], None] | None = None,
 ) -> SchemaT:
     """Force the model to call `tool_name` and return its arguments as a validated `schema` instance.
+
+    `extra_check` is for rules a JSON schema can't express (e.g. "citations must be ids we
+    actually provided"). It raises ValueError with a model-readable message; that triggers
+    the same single repair attempt as a schema error.
 
     Raises:
         ToolCallError: still invalid after one repair attempt.
@@ -103,6 +109,13 @@ def call_with_schema(
         try:
             message = client.chat(conversation, model=model, tools=[tool], tool_choice=tool_choice)
             result = _parse_tool_call(message, schema, tool_name)
+            if extra_check is not None:
+                try:
+                    extra_check(result)
+                except ValueError as error:
+                    raise ToolCallError(
+                        f"Output failed a content check: {error}", raw_output=result.model_dump_json()
+                    ) from error
             if attempt > 1:
                 logger.info("Tool call `%s` succeeded after repair (attempt %d)", tool_name, attempt)
             return result
