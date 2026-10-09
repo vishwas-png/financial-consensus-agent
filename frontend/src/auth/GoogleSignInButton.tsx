@@ -13,13 +13,13 @@ interface Props {
 export function GoogleSignInButton({ clientId = GOOGLE_CLIENT_ID, loadGoogle = loadGoogleIdentity }: Props) {
   const { signIn } = useAuth()
   const container = useRef<HTMLDivElement>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  // A missing client id is known during render, so it is derived here, not set from an effect
+  const configError = clientId ? null : 'Google sign-in is not configured (set VITE_GOOGLE_CLIENT_ID in frontend/.env).'
+  const error = configError ?? loadError
 
   useEffect(() => {
-    if (!clientId) {
-      setError('Google sign-in is not configured (set VITE_GOOGLE_CLIENT_ID in frontend/.env).')
-      return
-    }
+    if (!clientId) return
     let cancelled = false
     loadGoogle()
       .then((google) => {
@@ -33,7 +33,7 @@ export function GoogleSignInButton({ clientId = GOOGLE_CLIENT_ID, loadGoogle = l
         google.renderButton(container.current, { theme: 'outline', size: 'large', text: 'signin_with', shape: 'pill' })
       })
       .catch((e: Error) => {
-        if (!cancelled) setError(e.message)
+        if (!cancelled) setLoadError(e.message)
       })
     return () => {
       cancelled = true
