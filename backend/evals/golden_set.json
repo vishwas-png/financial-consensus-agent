@@ -1,0 +1,190 @@
+{
+ "version": 1,
+ "extraction_cases": [
+  {
+   "id": "extract-apple-plain",
+   "request": "How is Apple doing these days?",
+   "expected_ticker": "AAPL",
+   "notes": "Company name only, no ticker."
+  },
+  {
+   "id": "extract-berkshire-class-b",
+   "request": "Should I look at Berkshire Hathaway class B shares?",
+   "expected_ticker": "BRK-B",
+   "notes": "Class shares must use a hyphen (yfinance/EDGAR format); the model once produced BRK.B (DEVLOG Stage 2)."
+  },
+  {
+   "id": "extract-lowercase-ticker",
+   "request": "quick take on nvda please",
+   "expected_ticker": "NVDA",
+   "notes": "User gives a lowercase ticker directly; it must be uppercased."
+  },
+  {
+   "id": "extract-non-us-must-fail",
+   "request": "What do you think of Reliance Industries?",
+   "expected_ticker": null,
+   "notes": "Listed in India only (RELIANCE.NS). The correct outcome is a clean failure (ToolCallError or TickerNotFoundError), never a made-up US ticker."
+  }
+ ],
+ "judge_cases": [
+  {
+   "id": "judge-grounded-full",
+   "fixture": "aapl_snapshot.json",
+   "analysis": {
+    "thesis": "Apple looks fairly valued: high profitability and large cash returns justify much of its premium multiple.",
+    "supporting_data_points": [
+     "trailing_pe = 38.6 and forward_pe = 35.1",
+     "profit_margin = 27.6%",
+     "free_cash_flow = about $107.7B",
+     "annual revenue grew about 6.4%, from $391.0B (FY2024) to $416.2B (FY2025)",
+     "In 2025 Apple repurchased $89.3B of stock and paid $15.4B in dividends"
+    ],
+    "reasoning": "Margins and free cash flow are strong and fund large buybacks and dividends (AAPL-10K-2025-7-015). Growth is moderate at about 6% a year, so the stock is not cheap. A key risk is supply concentration: some components come from single or limited sources (AAPL-10K-2025-1A-023).",
+    "confidence": "medium",
+    "filing_citations": ["AAPL-10K-2025-7-015", "AAPL-10K-2025-1A-023"]
+   },
+   "expected_is_grounded": true,
+   "planted_claims": [],
+   "flaw": "none",
+   "notes": "Every number checked against aapl_snapshot.json: trailing_pe 38.635, forward_pe 35.139, profit_margin 0.27619, FCF 107,721,875,456; annual revenue 391,035,000,000 -> 416,161,000,000 = +6.43%; buybacks $89.3B and dividends $15.4B are stated in excerpt 7-015; single/limited sources is stated in 1A-023."
+  },
+  {
+   "id": "judge-wrong-number",
+   "fixture": "aapl_snapshot.json",
+   "analysis": {
+    "thesis": "Apple looks overvalued because its earnings multiple is extreme for a company growing revenue about 6% a year.",
+    "supporting_data_points": [
+     "trailing_pe = 45.2",
+     "annual revenue grew about 6.4%, from $391.0B (FY2024) to $416.2B (FY2025)",
+     "profit_margin = 27.6%"
+    ],
+    "reasoning": "A trailing P/E of 45.2 is very high relative to mid-single-digit revenue growth, even with strong margins.",
+    "confidence": "medium",
+    "filing_citations": []
+   },
+   "expected_is_grounded": false,
+   "planted_claims": ["45.2"],
+   "flaw": "wrong_number",
+   "notes": "trailing_pe in the fixture is 38.635, not 45.2 (45.77 is price_to_book, a plausible mix-up). The other numbers are correct."
+  },
+  {
+   "id": "judge-unit-misread",
+   "fixture": "aapl_snapshot.json",
+   "analysis": {
+    "thesis": "Apple is an attractive income stock thanks to its very high dividend yield.",
+    "supporting_data_points": [
+     "dividend yield of 32%",
+     "free_cash_flow = about $107.7B",
+     "Quarterly dividend of $0.26 per share"
+    ],
+    "reasoning": "A 32% dividend yield backed by over $100B of free cash flow makes Apple a standout for income investors (AAPL-10K-2025-7-015).",
+    "confidence": "high",
+    "filing_citations": ["AAPL-10K-2025-7-015"]
+   },
+   "expected_is_grounded": false,
+   "planted_claims": ["32%"],
+   "flaw": "unit_misread",
+   "notes": "dividend_yield_pct = 0.32 means 0.32%, not 32% (units note). The $0.26 quarterly dividend and FCF are correct."
+  },
+  {
+   "id": "judge-period-misread",
+   "fixture": "aapl_snapshot.json",
+   "analysis": {
+    "thesis": "Apple is a high-growth compounder, with annual revenue growth of 16.4% and strong margins.",
+    "supporting_data_points": [
+     "annual revenue growth of 16.4%",
+     "profit_margin = 27.6%",
+     "net income of about $112.0B in FY2025"
+    ],
+    "reasoning": "Annual revenue growth of 16.4% combined with a 27.6% margin supports a premium valuation.",
+    "confidence": "medium",
+    "filing_citations": []
+   },
+   "expected_is_grounded": false,
+   "planted_claims": ["16.4%"],
+   "flaw": "period_misread",
+   "notes": "revenue_growth = 0.164 is the latest QUARTER year-over-year; annual growth from annual_financials is about 6.4%. The same mistake was made by the live analyst in Stage 3 (DEVLOG). Net income FY2025 = 112,010,000,000 is correct."
+  },
+  {
+   "id": "judge-citation-unsupported",
+   "fixture": "aapl_snapshot.json",
+   "analysis": {
+    "thesis": "Apple's international growth is accelerating, led by Greater China.",
+    "supporting_data_points": [
+     "Greater China net sales grew 12% in 2025",
+     "Europe net sales grew 10% in 2025 to $111.0B"
+    ],
+    "reasoning": "Segment data shows broad international strength, with Greater China net sales up 12% (AAPL-10K-2025-7-005) and Europe up 10% (AAPL-10K-2025-7-005).",
+    "confidence": "medium",
+    "filing_citations": ["AAPL-10K-2025-7-005"]
+   },
+   "expected_is_grounded": false,
+   "planted_claims": ["Greater China"],
+   "flaw": "citation_unsupported",
+   "notes": "Excerpt 7-005 only contains the Americas ($178,353M, +7%) and Europe ($111,032M, +10%) rows; Greater China is not in the evidence, so the cited excerpt does not support that claim. The Europe claim is correct."
+  },
+  {
+   "id": "judge-outside-knowledge",
+   "fixture": "aapl_snapshot.json",
+   "analysis": {
+    "thesis": "Apple is set for an upgrade cycle that should lift growth above its recent ~6% annual pace.",
+    "supporting_data_points": [
+     "Apple plans to launch a foldable iPhone next year",
+     "annual revenue grew about 6.4%, from $391.0B (FY2024) to $416.2B (FY2025)"
+    ],
+    "reasoning": "The planned foldable iPhone launch next year should drive upgrades and push revenue growth higher than the recent ~6% annual rate.",
+    "confidence": "medium",
+    "filing_citations": []
+   },
+   "expected_is_grounded": false,
+   "planted_claims": ["foldable"],
+   "flaw": "outside_knowledge",
+   "notes": "No product launch plans appear anywhere in the market data or the 8 excerpts; the claim relies on outside knowledge and is unsupported regardless of whether it is true. The revenue numbers are correct."
+  },
+  {
+   "id": "judge-opinion-only",
+   "fixture": "aapl_snapshot.json",
+   "analysis": {
+    "thesis": "Apple is overvalued: its premium valuation leaves little margin of safety.",
+    "supporting_data_points": [
+     "price_to_book = 45.8",
+     "current price $336.90 is close to the 52-week high of $345.34",
+     "forward_pe = 35.1"
+    ],
+    "reasoning": "With the shares near their 52-week high and trading at a very rich book multiple, I think the risk/reward is unattractive; a premium this large is hard to justify for a mature company.",
+    "confidence": "low",
+    "filing_citations": []
+   },
+   "expected_is_grounded": true,
+   "planted_claims": [],
+   "flaw": "opinion_only",
+   "notes": "Facts are correct (price_to_book 45.774, current 336.9, 52-week high 345.34, forward_pe 35.139). 'Overvalued', 'unattractive', 'hard to justify' and 'mature company' are judgements, which the auditor prompt says not to flag. Tests that the judge doesn't over-flag opinions."
+  }
+ ],
+ "pipeline_cases": [
+  {
+   "id": "pipeline-apple",
+   "request": "How is Apple doing?",
+   "expected_ticker": "AAPL",
+   "expected_sector": "Technology",
+   "max_iterations": 2,
+   "notes": "Mega-cap tech; 10-K already indexed locally."
+  },
+  {
+   "id": "pipeline-microsoft",
+   "request": "Give me a read on Microsoft",
+   "expected_ticker": "MSFT",
+   "expected_sector": "Technology",
+   "max_iterations": 2,
+   "notes": "Different fiscal year end (June); first run ingests its 10-K."
+  },
+  {
+   "id": "pipeline-jpmorgan",
+   "request": "What about JPMorgan Chase?",
+   "expected_ticker": "JPM",
+   "expected_sector": "Financial Services",
+   "max_iterations": 2,
+   "notes": "A bank: different 10-K structure and metrics (no free cash flow in the usual sense); tests robustness outside tech."
+  }
+ ]
+}

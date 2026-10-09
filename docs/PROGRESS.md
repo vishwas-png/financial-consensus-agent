@@ -193,3 +193,62 @@ Stage 4: RAG over SEC filings. Parse the 10-K, chunk it semantically, store it i
 Stage 5 has two parts:
 - An Auditor (LLM-as-a-Judge) that checks the final claims against the cited filing text and sets `auditor_verdict`.
 - A standalone eval harness in `backend/evals/`: a golden set, scored runs, and judge calibration.
+
+## Stage 5: Auditor (LLM-as-a-Judge) + eval harness
+
+### Approved plan
+1. **Auditor node** (`core/nodes/auditor.py`, `AUDITOR_PROMPT`):
+   - It sees the final analysis and the same evidence the agents had, but not the critic's feedback.
+   - It uses tool `submit_verdict` on `REASONING_MODEL`.
+   - An `extra_check` makes sure `is_grounded` agrees with `unsupported_claims`.
+2. **Graph:** `done → auditor → END`, for both consensus and forced exit. The recursion limit now includes the auditor step, and the CLI prints the verdict and labels "UNRESOLVED DISAGREEMENT".
+3. **`backend/evals/`** (standalone):
+   - frozen AAPL fixture plus `capture_fixture.py`;
+   - `golden_set.json` with 4 extraction, 7 judge and 3 pipeline cases, validated by `golden.py`;
+   - `metrics.py`, `runner.py`, `run_evals.py` (suites: extraction / judge / pipeline / all);
+   - `judge_calibration.py` (confusion matrix, precision/recall with "ungrounded" as the positive class, claim recall, agreement over `--repeats`).
+4. **Tests:** `test_auditor.py`, updated graph tests, `test_evals.py` (golden-set validity, metric math, runners with a fake LLM), and the live debate test now asserts the auditor ran.
+5. **Docs and git:** DESIGN, DECISIONS D36–D40, README, PROGRESS, DEVLOG, and `**/evals/results/` in `.gitignore`. Branch `stage/5-auditor-evals`, tag `stage-5-auditor-evals`.
+
+### Changes from the plan
+- **Judge case swapped:** the case "fact from the filing with no citation" was replaced by "outside knowledge" (foldable iPhone). The original label was ambiguous, because the uncited fact *is* supported by an excerpt.
+- **Prompt fix:** reworded `debt_to_equity` in the units note (Stage 4 DEVLOG: the critic raised an invalid "78.4%" objection). It has its own commit.
+- **README fix:** fixed the corrupted PDF ingest command shipped in the Stage 4 README (escape sequences). It has its own commit.
+- **Eval runs:** ran `judge_calibration` once instead of `run_evals --suite all`, to avoid auditing the judge cases twice against Groq's daily token limit.
+
+### What was built
+| File | Purpose |
+|---|---|
+| `backend/src/core/nodes/auditor.py` | Auditor node, consistency check |
+| `backend/src/core/prompts.py` | `AUDITOR_PROMPT`; debt_to_equity wording |
+| `backend/src/core/graph.py` | Auditor wired after the loop; recursion limit; CLI verdict |
+| `backend/evals/golden.py`, `golden_set.json` | Golden set schema and 14 cases |
+| `backend/evals/fixtures/aapl_snapshot.json`, `capture_fixture.py` | Frozen evidence |
+| `backend/evals/metrics.py`, `runner.py`, `run_evals.py`, `judge_calibration.py` | Harness |
+| `backend/tests/test_auditor.py` | 10 tests |
+| `backend/tests/test_evals.py` | 22 tests |
+| `backend/tests/test_guardrail.py` | Auditor in graph tests |
+| `.gitignore` | `**/evals/results/` |
+
+### How it was tested
+- `pytest -q` → **188 passed, 8 deselected**.
+- `pytest -m live tests/test_guardrail.py` → passed: a 1-round AAPL debate with the auditor and valid citations.
+
+**Live eval results (2026-10-09/10, Groq free tier):**
+
+| Suite | Result |
+|---|---|
+| Extraction | **4/4**. Note: for Reliance the model invented `RIL`, which only failed because it doesn't exist (DEVLOG) |
+| Judge calibration | **7/7**: precision 1.00, recall 1.00, claim recall 1.00 (TP 5, FP 0, FN 0, TN 2) |
+| Pipeline (max 2 rounds) | **3/3** passed all code checks; average 168s per run; forced exits 2/3 (MSFT, JPM); auditor marked all 3 final analyses ungrounded |
+
+- **Manual review of the 9 claims the auditor flagged in the pipeline runs:** about 6–7 are valid and 2 are false flags caused by the auditor's own arithmetic or unit mistakes. Precision on real outputs is about 0.67–0.78, against 1.00 on the golden set. The golden set is too easy; see the DEVLOG for details and next steps.
+
+### Next
+Stage 6: FastAPI backend.
+- Google ID token auth.
+- A per-user quota checked before the graph runs.
+- Persistence of runs and events (user-scoped).
+- SSE streaming of `stream_research` updates.
+
+This needs the Google OAuth client ID.

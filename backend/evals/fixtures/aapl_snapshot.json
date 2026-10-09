@@ -1,0 +1,286 @@
+{
+ "ticker": "AAPL",
+ "captured_at": "2026-10-09T18:44:54.672138+00:00",
+ "raw_data": {
+  "ticker": "AAPL",
+  "fetched_at": "2026-10-09T18:44:56.702581+00:00",
+  "profile": {
+   "name": "Apple Inc.",
+   "sector": "Technology",
+   "industry": "Consumer Electronics",
+   "country": "United States",
+   "currency": "USD",
+   "exchange": "NMS"
+  },
+  "price": {
+   "current": 336.9,
+   "previous_close": 340.42,
+   "fifty_two_week_high": 345.34,
+   "fifty_two_week_low": 243.42
+  },
+  "valuation": {
+   "market_cap": 4916779155456,
+   "trailing_pe": 38.63532,
+   "forward_pe": 35.138844,
+   "price_to_book": 45.774456,
+   "dividend_yield_pct": 0.32,
+   "beta": 1.069
+  },
+  "financials": {
+   "total_revenue": 466822987776,
+   "revenue_growth": 0.164,
+   "net_income": 128929996800,
+   "profit_margin": 0.27618998,
+   "free_cash_flow": 107721875456,
+   "total_debt": 84343996416,
+   "total_cash": 62399000576,
+   "debt_to_equity": 78.445
+  },
+  "annual_financials": [
+   {
+    "fiscal_year_end": "2025-09-30",
+    "total_revenue": 416161000000.0,
+    "net_income": 112010000000.0
+   },
+   {
+    "fiscal_year_end": "2024-09-30",
+    "total_revenue": 391035000000.0,
+    "net_income": 93736000000.0
+   },
+   {
+    "fiscal_year_end": "2023-09-30",
+    "total_revenue": 383285000000.0,
+    "net_income": 96995000000.0
+   },
+   {
+    "fiscal_year_end": "2022-09-30",
+    "total_revenue": 394328000000.0,
+    "net_income": 99803000000.0
+   }
+  ],
+  "price_history": [
+   {
+    "date": "2025-10-06",
+    "close": 244.3673095703125
+   },
+   {
+    "date": "2025-10-13",
+    "close": 251.36148071289062
+   },
+   {
+    "date": "2025-10-20",
+    "close": 261.85272216796875
+   },
+   {
+    "date": "2025-10-27",
+    "close": 269.3749084472656
+   },
+   {
+    "date": "2025-11-03",
+    "close": 267.48193359375
+   },
+   {
+    "date": "2025-11-10",
+    "close": 271.6705322265625
+   },
+   {
+    "date": "2025-11-17",
+    "close": 270.75299072265625
+   },
+   {
+    "date": "2025-11-24",
+    "close": 278.0930480957031
+   },
+   {
+    "date": "2025-12-01",
+    "close": 278.0232238769531
+   },
+   {
+    "date": "2025-12-08",
+    "close": 277.5245666503906
+   },
+   {
+    "date": "2025-12-15",
+    "close": 272.9271240234375
+   },
+   {
+    "date": "2025-12-22",
+    "close": 272.6578674316406
+   },
+   {
+    "date": "2025-12-29",
+    "close": 270.27435302734375
+   },
+   {
+    "date": "2026-01-05",
+    "close": 258.6659240722656
+   },
+   {
+    "date": "2026-01-12",
+    "close": 254.83633422851562
+   },
+   {
+    "date": "2026-01-19",
+    "close": 247.36666870117188
+   },
+   {
+    "date": "2026-01-26",
+    "close": 258.7756652832031
+   },
+   {
+    "date": "2026-02-02",
+    "close": 277.364990234375
+   },
+   {
+    "date": "2026-02-09",
+    "close": 255.32435607910156
+   },
+   {
+    "date": "2026-02-16",
+    "close": 264.1086730957031
+   },
+   {
+    "date": "2026-02-23",
+    "close": 263.7093811035156
+   },
+   {
+    "date": "2026-03-02",
+    "close": 257.0013427734375
+   },
+   {
+    "date": "2026-03-09",
+    "close": 249.6744384765625
+   },
+   {
+    "date": "2026-03-16",
+    "close": 247.54823303222656
+   },
+   {
+    "date": "2026-03-23",
+    "close": 248.35679626464844
+   },
+   {
+    "date": "2026-03-30",
+    "close": 255.464111328125
+   },
+   {
+    "date": "2026-04-06",
+    "close": 260.0159912109375
+   },
+   {
+    "date": "2026-04-13",
+    "close": 269.7486267089844
+   },
+   {
+    "date": "2026-04-20",
+    "close": 270.5771179199219
+   },
+   {
+    "date": "2026-04-27",
+    "close": 279.6409606933594
+   },
+   {
+    "date": "2026-05-04",
+    "close": 292.7974853515625
+   },
+   {
+    "date": "2026-05-11",
+    "close": 299.9713134765625
+   },
+   {
+    "date": "2026-05-18",
+    "close": 308.55389404296875
+   },
+   {
+    "date": "2026-05-25",
+    "close": 311.7911071777344
+   },
+   {
+    "date": "2026-06-01",
+    "close": 307.0751647949219
+   },
+   {
+    "date": "2026-06-08",
+    "close": 290.879150390625
+   },
+   {
+    "date": "2026-06-15",
+    "close": 297.7532043457031
+   },
+   {
+    "date": "2026-06-22",
+    "close": 283.53546142578125
+   },
+   {
+    "date": "2026-06-29",
+    "close": 308.3640441894531
+   },
+   {
+    "date": "2026-07-06",
+    "close": 315.0483093261719
+   },
+   {
+    "date": "2026-07-13",
+    "close": 333.452392578125
+   },
+   {
+    "date": "2026-07-20",
+    "close": 332.7330322265625
+   },
+   {
+    "date": "2026-07-27",
+    "close": 308.6438293457031
+   },
+   {
+    "date": "2026-08-03",
+    "close": 313.05999755859375
+   },
+   {
+    "date": "2026-08-10",
+    "close": 305.92999267578125
+   },
+   {
+    "date": "2026-08-17",
+    "close": 309.3500061035156
+   },
+   {
+    "date": "2026-08-24",
+    "close": 319.70001220703125
+   },
+   {
+    "date": "2026-08-31",
+    "close": 319.9700012207031
+   },
+   {
+    "date": "2026-09-07",
+    "close": 332.2699890136719
+   },
+   {
+    "date": "2026-09-14",
+    "close": 336.1300048828125
+   },
+   {
+    "date": "2026-09-21",
+    "close": 341.07000732421875
+   },
+   {
+    "date": "2026-09-28",
+    "close": 333.69000244140625
+   },
+   {
+    "date": "2026-10-05",
+    "close": 336.8800048828125
+   }
+  ]
+ },
+ "filing_chunks": [
+  "[AAPL-10K-2025-1A-023] (Item 1A - Risk Factors) Changes or additions to the Company’s supply chain require considerable time and resources and involve significant risks and uncertainties, including exposure to additional regulatory and operational risks.\n\nFuture operating results depend upon the Company’s ability to obtain components in sufficient quantities on commercially reasonable terms.\n\nBecause the Company currently obtains certain components from single or limited sources, the Company is subject to significant supply and pricing risks. Many components, including those that are available from multiple sources, are at times subject to industry-wide shortages and significant commodity pricing fluctuations that can materially adversely affect the Company’s business, results of operations, financial condition and stock price. For example, the global semiconductor industry has in the past experienced high demand and shortages of supply, which adversely affected the Company’s ability to obtain sufficient quantities of components and products on commercially reasonable terms, or at all. Such disruptions could occur in the future.",
+  "[AAPL-10K-2025-1-005] (Item 1 - Business) Segments The Company manages its business primarily on a geographic basis. The Company’s reportable segments consist of the Americas, Europe, Greater China, Japan and Rest of Asia Pacific. Americas includes both North and South America. Europe includes European countries, as well as India, the Middle East and Africa. Greater China includes China mainland, Hong Kong and Taiwan. Rest of Asia Pacific includes Australia, New Zealand and those Asian countries not included in the Company’s other reportable segments. Although the reportable segments provide similar hardware and software products and similar services, each one is managed separately to better align with the location of the Company’s customers and distribution partners and the unique market dynamics of each geographic region.",
+  "[AAPL-10K-2025-7-005] (Item 7 - Management's Discussion and Analysis) Segment Operating Performance The following table shows net sales by reportable segment for 2025, 2024 and 2023 (dollars in millions):\n\n2025 Change 2024 Change 2023 Americas $ 178,353 7 % $ 167,045 3 % $ 162,560 Europe 111,032 10 % 101,328 7 % 94,294",
+  "[AAPL-10K-2025-7-015] (Item 7 - Management's Discussion and Analysis) Capital Return Program In addition to its contractual cash requirements, the Company has an authorized share repurchase program. The program does not obligate the Company to acquire a minimum amount of shares. As of September 27, 2025, the Company’s quarterly cash dividend was $0.26 per share. The Company intends to increase its dividend on an annual basis, subject to declaration by the Board.\n\nIn May 2025, the Company announced a new share repurchase program of up to $100 billion and raised its quarterly dividend from $0.25 to $0.26 per share beginning in May 2025. During 2025, the Company repurchased $89.3 billion of its common stock and paid dividends and dividend equivalents of $15.4 billion.",
+  "[AAPL-10K-2025-7A-001] (Item 7A - Quantitative and Qualitative Disclosures About Market Risk) 2025 2024 Investment portfolio 100 basis points, all tenors Decline in fair value\n\n$ 2,416 $ 2,755 Term debt 100 basis points, all tenors Increase in annual interest expense $ 129 $ 139\n\nForeign Exchange Rate Risk The Company’s exposure to foreign exchange rate risk relates primarily to the Company being a net receiver of currencies other than the U.S. dollar. Changes in exchange rates, and in particular a strengthening of the U.S. dollar, will negatively affect the Company’s net sales and gross margins as expressed in U.S. dollars. Fluctuations in exchange rates may also affect the fair values of certain of the Company’s assets and liabilities. To protect against foreign exchange rate risk, the Company may use derivative instruments, offset exposures, or adjust local currency pricing of its products and services. However, the Company may choose to not hedge certain foreign currency exposures for a variety of reasons, including accounting considerations or prohibitive cost.",
+  "[AAPL-10K-2025-3-005] (Item 3 - Legal Proceedings) Other Legal Proceedings The Company is subject to other legal proceedings and claims that have not been fully resolved and that have arisen in the ordinary course of business. The Company settled certain matters during the fourth quarter of 2025 that did not individually or in the aggregate have a material impact on the Company’s financial condition or operating results. The outcome of litigation is inherently uncertain. If one or more legal matters were resolved against the Company in a reporting period for amounts above management’s expectations, the Company’s financial condition and operating results for that reporting period could be materially adversely affected.",
+  "[AAPL-10K-2025-1A-010] (Item 1A - Risk Factors) Many of the Company’s operations, retail stores and facilities, as well as critical business operations of the Company’s suppliers and contract manufacturers, are in locations that are prone to earthquakes and other natural disasters. Global climate change is resulting in certain types of natural disasters and extreme weather occurring more frequently or with more intense effects. In addition, the Company’s and its suppliers’ operations, retail stores and facilities are subject to the risk of interruption by fire, power shortages, nuclear power plant accidents and other industrial accidents, terrorist attacks and other hostile acts, ransomware and other cybersecurity attacks, labor disputes, public health issues and other events beyond the Company’s control.\n\nSuch events can make it difficult or impossible for the Company to manufacture and deliver products to its customers, create delays and inefficiencies in the Company’s supply and manufacturing chain, result in slowdowns and outages to the Company’s service offerings, increase the Company’s costs, and negatively impact consumer spending and demand in affected areas.",
+  "[AAPL-10K-2025-7A-002] (Item 7A - Quantitative and Qualitative Disclosures About Market Risk) The Company applied a value-at-risk (“VAR”) model to its foreign currency derivative positions to assess the potential impact of fluctuations in exchange rates. The VAR model used a Monte Carlo simulation. The VAR is the maximum expected loss in fair value, for a given confidence interval, to the Company’s foreign currency derivative positions due to adverse movements in rates. Based on the results of the model, the Company estimates, with 95% confidence, a maximum one-day loss in fair value of $590 million and $538 million as of September 27, 2025 and September 28, 2024, respectively. Changes in the Company’s underlying foreign currency exposures, which were excluded from the assessment, generally offset changes in the fair values of the Company’s foreign currency derivatives."
+ ]
+}

@@ -25,6 +25,7 @@ chroma_db/
 .chroma/
 **/data/raw/
 **/data/filings/
+**/evals/results/
 *.pdf
 
 # Node / frontend

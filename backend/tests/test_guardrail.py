@@ -9,9 +9,10 @@ from langgraph.errors import GraphRecursionError
 from src.core.graph import run_research, stream_research
 from src.core.nodes import consensus_check as guardrail_module
 from src.core.nodes.analyst import ANALYST_TOOL_NAME
+from src.core.nodes.auditor import AUDITOR_TOOL_NAME
 from src.core.nodes.consensus_check import consensus_check, route_after_consensus
 from src.core.nodes.critic import CRITIC_TOOL_NAME
-from src.core.schemas import AnalystOutput, CriticFeedback
+from src.core.schemas import AnalystOutput, AuditorVerdict, CriticFeedback
 from src.core.state import GraphState
 from src.tools.market_data import InvalidTickerError
 from tests.fakes import ToolRoutingClient
@@ -105,11 +106,15 @@ def analysis(round_number: int) -> AnalystOutput:
                          reasoning="r", confidence="medium")
 
 
+GROUNDED = AuditorVerdict(is_grounded=True, unsupported_claims=[], notes="ok")
+
+
 def debate_client(critic_agrees_in_round: int | None) -> ToolRoutingClient:
     """Analyst writes version N in round N; critic agrees only in the given round (None = never)."""
     return ToolRoutingClient({
         ANALYST_TOOL_NAME: analysis,
         CRITIC_TOOL_NAME: lambda n: AGREE if n == critic_agrees_in_round else DISAGREE,
+        AUDITOR_TOOL_NAME: lambda n: GROUNDED,
     })
 
 
@@ -127,6 +132,11 @@ def test_graph_forced_exit_after_exactly_max_iterations_rounds() -> None:
     assert final.forced_exit is True
     assert final.critic_feedback == DISAGREE
     assert final.analyst_output is not None and final.analyst_output.thesis == "Thesis v3"
+    # A forced exit still goes through the auditor, exactly once, after the last round
+    assert len(client.calls_for(AUDITOR_TOOL_NAME)) == 1
+    assert client.calls[-1]["tool"] == AUDITOR_TOOL_NAME
+    assert final.auditor_verdict == GROUNDED
+    assert "Thesis v3" in client.calls[-1]["messages"][1]["content"]
 
 
 def test_graph_stops_early_on_consensus_in_round_two() -> None:
@@ -141,7 +151,7 @@ def test_graph_stops_early_on_consensus_in_round_two() -> None:
 def test_graph_single_round_on_immediate_consensus() -> None:
     client = debate_client(critic_agrees_in_round=1)
     final = run(client, max_iterations=3)
-    assert len(client.calls) == 2  # one analyst + one critic call
+    assert [c["tool"] for c in client.calls] == [ANALYST_TOOL_NAME, CRITIC_TOOL_NAME, AUDITOR_TOOL_NAME]
     assert final.iteration_count == 1
     assert final.forced_exit is False
 
@@ -177,6 +187,7 @@ def test_recursion_limit_backstop_catches_a_broken_guardrail(monkeypatch: pytest
         run(client, max_iterations=3)
     # Stopped within one extra round of the intended cap, not after thousands of LLM calls
     assert len(client.calls_for(ANALYST_TOOL_NAME)) <= 4
+    assert client.calls_for(AUDITOR_TOOL_NAME) == []  # never reached "done"
 
 
 def test_stream_yields_node_updates_in_order() -> None:
@@ -184,9 +195,10 @@ def test_stream_yields_node_updates_in_order() -> None:
                                    ticker_factory=lambda s: FakeTicker(), filing_retriever=no_filings))
     assert [name for name, _ in updates] == [
         "fetch_data", "analyst", "critic", "consensus_check",
-        "analyst", "critic", "consensus_check",
+        "analyst", "critic", "consensus_check", "auditor",
     ]
-    assert updates[-1][1] == {"iteration_count": 2, "forced_exit": True}
+    assert updates[-2][1] == {"iteration_count": 2, "forced_exit": True}
+    assert updates[-1][1] == {"auditor_verdict": GROUNDED}
 
 
 def test_invalid_ticker_rejected_before_any_llm_call() -> None:
@@ -205,6 +217,7 @@ def test_live_single_round_debate() -> None:
     assert final.critic_feedback is not None
     assert final.iteration_count == 1
     assert final.forced_exit is (not final.critic_feedback.agrees)
+    assert final.auditor_verdict is not None
     # Stage 4: real 10-K excerpts were retrieved, and every citation points at one of them
     assert final.filing_chunks
     provided_ids = {chunk.split("]")[0].lstrip("[") for chunk in final.filing_chunks}

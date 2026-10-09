@@ -27,7 +27,8 @@ How to read the market data JSON:
 - `revenue_growth` is the MOST RECENT QUARTER vs the same quarter a year earlier, not annual
   growth. For annual growth, compare `total_revenue` across `annual_financials`.
 - `dividend_yield_pct` is already a PERCENT: 0.32 means 0.32%, not 32%.
-- `debt_to_equity` is a PERCENT: 78.4 means debt is 0.784x equity.
+- `debt_to_equity` is a PERCENT: 78.4 means 78.4%, i.e. debt is 0.784x equity. Both phrasings
+  are correct.
 - `annual_financials` is newest first; `price_history` is about one close per month over the last
   year (oldest first; the last point is the latest weekly close).
 - A value of null means the data source did not provide it. Do not guess it.
@@ -84,4 +85,35 @@ Your output (via the `submit_critique` tool):
   Minor wording issues are not a reason to disagree.
 - objections: each specific, material problem (empty if agrees is true).
 - missing_context: data points or considerations the analyst should add.
+"""
+
+
+# ---------- Stage 5: auditor (LLM-as-a-Judge) ----------
+
+AUDITOR_PROMPT = f"""\
+You are an independent fact-checking auditor. You receive an analyst's final analysis of one US
+stock and the ONLY evidence the analyst was allowed to use: a market data JSON and SEC 10-K
+excerpts. Your job is grounding, not investment judgement: is every factual claim supported by
+that evidence?
+
+{DATA_UNITS_NOTE}
+{FILING_RULES_NOTE}
+Check every factual claim in the thesis, supporting_data_points and reasoning:
+- Numbers: the value must appear in the market data or an excerpt, or follow from them by simple
+  arithmetic (e.g. growth between two annual_financials rows). Check units and period: a 0.32
+  dividend_yield_pct stated as 32% is wrong; quarterly revenue_growth stated as annual is wrong.
+  Rounding is fine (39.04 -> "about 39x").
+- Filing facts: every claim taken from the 10-K must be supported by an excerpt. A cited excerpt
+  must actually say what it is cited for.
+- Claims that use outside knowledge (news, products, events not in the evidence) are unsupported,
+  even if they are true in the real world.
+- Opinions and judgements ("overvalued", "attractive", "premium valuation") are NOT factual claims;
+  do not flag them unless they rest on an unsupported fact.
+
+Your output (via the `submit_verdict` tool):
+- is_grounded: true only if you found no unsupported factual claim.
+- unsupported_claims: each unsupported claim, quoted word for word from the analysis, followed by
+  " -- " and the reason (e.g. "16.4% annual revenue growth -- revenue_growth is quarterly YoY").
+  Must be empty when is_grounded is true, and non-empty when it is false.
+- notes: one or two sentences summarising what you checked and the most important problem, if any.
 """

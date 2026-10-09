@@ -2,7 +2,7 @@
 
 Sign in with Google, enter a stock ticker, and watch two AI agents argue about it live. An **Analyst** agent writes an investment thesis from market data and SEC filings; a **Critic** agent challenges it; they loop until they agree or hit a hard iteration cap. An **Auditor** agent (LLM-as-a-Judge) then checks every final claim against the retrieved SEC filing text and flags anything unsupported. All financial reasoning lives in prompts; the code plumbs data in and validated, structured output out.
 
-> Status: **Stages 0-4 complete** (design, schemas, DB models, market data, LLM tool calling, Analyst/Critic debate loop with iteration cap, RAG over SEC 10-K filings with citations). Later stages are planned below.
+> Status: **Stages 0-5 complete** (design, schemas, DB models, market data, LLM tool calling, Analyst/Critic debate loop with iteration cap, RAG over SEC 10-K filings with citations, Auditor (LLM-as-a-Judge) and an eval harness). Later stages are planned below.
 
 ## Architecture
 
@@ -81,10 +81,25 @@ python -m src.tools.market_data AAPL                          # print a market d
 python -m src.core.tool_calling "How is Apple doing?"         # LLM picks the ticker, then fetches data
 python -m src.core.graph AAPL 3                               # live Analyst/Critic debate, max 3 rounds
 python -m src.rag.retriever AAPL "supply chain risk"          # search the latest 10-K (downloads + indexes it on first use)
-python -m src.rag.ingest path	ok.pdf AAPL 2025              # index a 10-K PDF you downloaded yourself
+python -m src.rag.ingest path\to\10k.pdf AAPL 2025              # index a 10-K PDF you downloaded yourself
 ```
 
-Backend server, frontend and evals: added in Stages 6, 7 and 5.
+### Evals (standalone, not part of the app)
+
+```powershell
+cd backend
+venv\Scripts\activate
+python -m evals.run_evals --suite extraction        # request -> ticker (~1 min)
+python -m evals.judge_calibration                   # auditor vs manual labels (~7 min on Groq free tier)
+python -m evals.judge_calibration --repeats 3       # + consistency across repeats
+python -m evals.run_evals --suite pipeline          # full live debates, code-checked (~15 min)
+```
+
+Latest results (Groq free tier, `gpt-oss-120b`): extraction 4/4 · judge calibration 7/7 (precision 1.00, recall 1.00, claim recall 1.00) · pipeline 3/3 code checks passed, 2/3 forced exits, ~170 s per run. Read the limitations below before trusting the judge score.
+
+Results are printed and saved to `backend/evals/results/` (gitignored). See [docs/DESIGN.md](docs/DESIGN.md#10-evaluation-harness-stage-5).
+
+Backend server and frontend: added in Stages 6 and 7.
 
 ## Project status
 
@@ -95,7 +110,7 @@ Backend server, frontend and evals: added in Stages 6, 7 and 5.
 | 2 | Tool calling + structured extraction (Groq) | ✅ Done |
 | 3 | LangGraph Analyst/Critic loop with iteration guardrail | ✅ Done |
 | 4 | RAG over SEC filings (ChromaDB) | ✅ Done |
-| 5 | Auditor (LLM-as-a-Judge) + eval harness | Planned |
+| 5 | Auditor (LLM-as-a-Judge) + eval harness | ✅ Done |
 | 6 | FastAPI: Google auth, quota, persistence, SSE | Planned |
 | 7 | React frontend | Planned |
 | 8 | Deployment + hardening | Planned |
@@ -104,6 +119,9 @@ Backend server, frontend and evals: added in Stages 6, 7 and 5.
 ## Honest limitations
 
 - Not investment advice. LLM output can be wrong even when the Auditor marks it grounded; the Auditor is itself an LLM and is calibrated, not perfect.
+- The Auditor scored 7/7 on the hand-labelled judge cases, but those cases are small and clean. On real pipeline outputs, a manual check found about 2 of its 9 flags were false alarms caused by its own arithmetic/unit mistakes (precision ≈ 0.7). Numeric claims should eventually be checked in code.
+- The eval set is small (14 cases, one frozen AAPL snapshot for judge cases), so scores move a lot with one case. Critic objection quality is not evaluated yet.
+- Ticker extraction can invent a symbol for a non-US company (seen: Reliance → `RIL`); it is only caught when that symbol has no market data.
 - US tickers only (no exchange suffixes such as `.NS`).
 - yfinance is an unofficial data source and can break or rate-limit.
 - Free-tier Groq rate limits cap throughput: `gpt-oss-120b` allows 8k tokens/minute and one agent call uses ~5k, so a 2-round debate takes about 2 minutes.

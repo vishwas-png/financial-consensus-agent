@@ -37,7 +37,7 @@ flowchart LR
   - Split into node + router because LangGraph routing functions cannot update state.
   - Backstop: `recursion_limit = 1 + 3 x max_iterations + 1` steps, so even a broken router cannot loop beyond about one extra round.
   - A forced exit still goes to the Auditor and is flagged as **unresolved disagreement**, so the UI and stored result never present a forced exit as consensus.
-- `auditor` (Stage 5; until then `done` goes straight to END): produces an `AuditorVerdict` (is_grounded, unsupported_claims, notes) by comparing claims against retrieved filing text.
+- `auditor` (LLM-as-a-Judge): runs after every debate, consensus or forced exit. It sees the final `AnalystOutput` and the same evidence the agents had, but **not** the critic's feedback, so its verdict is independent. It produces an `AuditorVerdict` (is_grounded, unsupported_claims, notes). A verdict whose `is_grounded` contradicts its `unsupported_claims` list gets one repair attempt.
 
 Why a hard cap: two LLMs can disagree forever. Without a cap, cost and latency are unbounded and a run might never finish.
 
@@ -140,7 +140,7 @@ flowchart LR
 - **Sections:** each 10-K Item heading appears twice (table of contents, then the real section); the last occurrence marks the section start. Only Items 1, 1A, 1C, 3, 7 and 7A are indexed.
 - **Semantic chunking:** paragraphs within a section are embedded. A chunk ends where neighbouring-paragraph similarity is in the section's lowest 20% (and below its median), or at 1,200 characters. Size-based breaks repeat one paragraph as overlap; tiny chunks are merged into a neighbour.
 - **Metadata pre-filtering:** every vector query filters on `ticker`, `accession` (one filing) and `section` before ranking, so another company's or another year's text can never be returned.
-- **Citations:** chunk ids such as `AAPL-10K-2025-1A-007` are deterministic. The Analyst must cite only ids it was given; this is enforced in code (`extra_check` → one repair attempt). The Critic sees the same excerpts. Stage 5's Auditor will check that citations actually support the claims.
+- **Citations:** chunk ids such as `AAPL-10K-2025-1A-007` are deterministic. The Analyst must cite only ids it was given; this is enforced in code (`extra_check` → one repair attempt). The Critic sees the same excerpts. The Auditor then checks that citations actually support the claims.
 - **Failure mode:** a missing filing (ETF, foreign issuer, EDGAR down) logs a warning and the debate runs on market data only.
 
 ## 8. Structured output contracts (Pydantic v2)
@@ -154,3 +154,42 @@ flowchart LR
 ## 9. Streaming
 
 `POST /research` creates a run (after the quota check) and returns its id. `GET /research/{id}/stream` opens an SSE stream; each graph step is saved as a `run_event` and pushed as an SSE message. `GET /history` lists the user's past runs.
+
+## 10. Evaluation harness (Stage 5)
+
+`backend/evals/` is a standalone tool for measuring quality. It is **not** part of the live app; nothing in `src/` imports it.
+
+```mermaid
+flowchart LR
+    G[golden_set.json<br/>14 hand-labelled cases] --> X[extraction suite<br/>request -> exact ticker]
+    G --> J[judge suite<br/>planted-flaw analyses]
+    G --> P[pipeline suite<br/>full live runs]
+    F[(fixtures/aapl_snapshot.json<br/>frozen market data + 10-K excerpts)] --> J
+    J --> A[real auditor node]
+    A --> M[metrics.py<br/>confusion, precision/recall,<br/>claim recall, agreement]
+    P --> C[code checks on final GraphState]
+    X --> R[(evals/results/*.json<br/>gitignored)]
+    M --> R
+    C --> R
+```
+
+- **Extraction suite (4 cases):** a free-text request must give an exact ticker. One case (a company listed only in India) must fail cleanly, either at extraction or because the invented ticker does not exist.
+- **Judge suite (7 cases):** each case is a hand-written analysis containing one planted flaw:
+  - a wrong number;
+  - a unit misread;
+  - a period misread;
+  - a citation that doesn't support its claim;
+  - outside knowledge.
+
+  Two control cases are grounded: one fully grounded analysis, and one that contains only opinions. The cases are checked against a **frozen** evidence snapshot, so labels stay correct after prices move or a new 10-K comes out. Each label holds by construction and is explained in the case's `notes` field.
+- **Pipeline suite (3 cases):** full live runs (extraction → debate → auditor) for AAPL, MSFT and JPM. Each run is scored by code checks:
+  - correct ticker and sector;
+  - filings retrieved;
+  - citations valid;
+  - rounds within the cap;
+  - `forced_exit` consistent with the critic's last verdict;
+  - auditor ran.
+- **Judge calibration** (`judge_calibration.py`) compares the auditor's verdicts with the manual labels.
+  - The positive class is **ungrounded**: precision is "when it flags, is it right?" and recall is "how many planted flaws does it catch?".
+  - It also reports **claim recall**: whether the auditor named the planted claim, not just the verdict.
+  - With `--repeats N` it reports **agreement**: whether it gives the same verdict every time.
