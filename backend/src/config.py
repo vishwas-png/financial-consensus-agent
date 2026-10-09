@@ -38,3 +38,9 @@ TOP_K_CHUNKS: int = 8                            # filing excerpts given to the 
 # --- Graph guardrail ---
 # Hard cap on Analyst <-> Critic rounds before the graph is forced to exit.
 MAX_ITERATIONS: int = 3
+
+# --- API quotas (Stage 6), checked BEFORE any graph work ---
+RUNS_PER_DAY: int = 5                # research runs per user per rolling 24 hours
+MAX_ACTIVE_RUNS_PER_USER: int = 1    # pending/running runs a user may have at once
+MAX_CONCURRENT_RUNS: int = 2         # runs executing at once across ALL users (Groq free tier)
+MAX_USER_ITERATIONS: int = 3         # highest max_iterations a user may request
