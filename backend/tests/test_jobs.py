@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Iterator
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -35,8 +35,8 @@ def fake_graph(ticker: str, max_iterations: int = 3) -> Iterator[tuple[str, dict
     yield "auditor", {"auditor_verdict": VERDICT}
 
 
-class InlineExecutor:
-    """Runs submitted jobs immediately, in the calling thread."""
+class InlineExecutor(Executor):
+    """Runs submitted jobs immediately, in the calling thread (Executor gives a no-op shutdown)."""
 
     def submit(self, fn, *args, **kwargs) -> Future:  # type: ignore[no-untyped-def]
         future: Future = Future()
