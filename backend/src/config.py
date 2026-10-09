@@ -28,6 +28,13 @@ DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'app.db
 TOOL_CALL_MODEL: str = "openai/gpt-oss-20b"    # smaller + faster, used for tool calling / extraction
 REASONING_MODEL: str = "openai/gpt-oss-120b"   # larger model for analyst/critic/auditor reasoning
 
+# --- SEC filings / RAG (Stage 4) ---
+# SEC requires a User-Agent with a name and contact email on every EDGAR request.
+SEC_USER_AGENT: str | None = os.getenv("SEC_USER_AGENT")
+FILINGS_DIR = BACKEND_DIR / "data" / "filings"  # downloaded filings + manually added PDFs (gitignored)
+CHROMA_DIR = BACKEND_DIR / "chroma_db"           # persistent vector store (gitignored)
+TOP_K_CHUNKS: int = 8                            # filing excerpts given to the agents per run
+
 # --- Graph guardrail ---
 # Hard cap on Analyst <-> Critic rounds before the graph is forced to exit.
 MAX_ITERATIONS: int = 3
