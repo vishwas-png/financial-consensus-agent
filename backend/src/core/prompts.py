@@ -24,6 +24,8 @@ DATA_UNITS_NOTE = """\
 How to read the market data JSON:
 - Money values are in the listed `currency`, in full units (not thousands or millions).
 - `revenue_growth` and `profit_margin` are FRACTIONS: 0.164 means 16.4%.
+- `revenue_growth` is the MOST RECENT QUARTER vs the same quarter a year earlier, not annual
+  growth. For annual growth, compare `total_revenue` across `annual_financials`.
 - `dividend_yield_pct` is already a PERCENT: 0.32 means 0.32%, not 32%.
 - `debt_to_equity` is a PERCENT: 78.4 means debt is 0.784x equity.
 - `annual_financials` is newest first; `price_history` is weekly closes, oldest first.
