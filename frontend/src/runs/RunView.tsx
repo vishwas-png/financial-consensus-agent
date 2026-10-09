@@ -1,0 +1,183 @@
+// Draws a run: data card, one section per debate round, the outcome banner, the auditor's
+// verdict (or an error). Purely presentational: all logic lives in runReducer.ts.
+
+import { useState } from 'react'
+import type { AnalystOutput, AuditorVerdict, CriticFeedback, FetchDataContent } from '../api/types'
+import { currentActivity, debateOutcome, type Round, type RunViewState } from './runReducer'
+
+type Excerpts = Record<string, { section: string; text: string }>
+
+interface RunViewProps {
+  ticker: string
+  state: RunViewState
+  /** Filing excerpt texts by id; available once the run has finished. */
+  excerpts?: Excerpts
+}
+
+export function RunView({ ticker, state, excerpts = {} }: RunViewProps) {
+  const activity = currentActivity(state)
+  const outcome = debateOutcome(state)
+  return (
+    <div className="run-view">
+      {state.data && <DataCard ticker={ticker} data={state.data} />}
+      {state.rounds.map((round) => (
+        <RoundSection key={round.number} round={round} excerpts={excerpts} />
+      ))}
+      {outcome && <OutcomeBanner kind={outcome.kind} rounds={outcome.rounds} />}
+      {state.auditor && <AuditorCard verdict={state.auditor} />}
+      {state.error && (
+        <section className="card card-error" role="alert">
+          <h3>Run failed</h3>
+          <p>{state.error}</p>
+        </section>
+      )}
+      {state.finished === 'timeout' && (
+        <p className="muted">The live stream stopped waiting for this run. Reload the page later to see the result.</p>
+      )}
+      {activity && (
+        <p className="activity" aria-live="polite">
+          <span className="spinner" aria-hidden="true" /> {activity}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function DataCard({ ticker, data }: { ticker: string; data: FetchDataContent }) {
+  const price = data.price != null ? `${data.price.toFixed(2)} ${data.currency ?? ''}`.trim() : 'n/a'
+  return (
+    <section className="card card-data">
+      <h3>
+        {data.company ?? ticker} <span className="ticker">{ticker}</span>
+      </h3>
+      <p>
+        Price {price} · {data.filing_excerpts} excerpts from the latest 10-K
+      </p>
+    </section>
+  )
+}
+
+function RoundSection({ round, excerpts }: { round: Round; excerpts: Excerpts }) {
+  return (
+    <section className="round" aria-label={`Round ${round.number}`}>
+      <h2>Round {round.number}</h2>
+      {round.analyst && <AnalystCard output={round.analyst} excerpts={excerpts} />}
+      {round.critic && <CriticCard feedback={round.critic} />}
+    </section>
+  )
+}
+
+function AnalystCard({ output, excerpts }: { output: AnalystOutput; excerpts: Excerpts }) {
+  const [openCitation, setOpenCitation] = useState<string | null>(null)
+  const excerpt = openCitation ? excerpts[openCitation] : undefined
+  return (
+    <article className="card card-analyst">
+      <header>
+        <h3>Analyst</h3>
+        <span className={`badge badge-${output.confidence}`}>{output.confidence} confidence</span>
+      </header>
+      <p className="thesis">{output.thesis}</p>
+      <ul>
+        {output.supporting_data_points.map((point) => (
+          <li key={point}>{point}</li>
+        ))}
+      </ul>
+      <details>
+        <summary>Reasoning</summary>
+        <p>{output.reasoning}</p>
+      </details>
+      {output.filing_citations.length > 0 && (
+        <div className="citations">
+          <span className="muted">10-K citations:</span>
+          {output.filing_citations.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`chip${openCitation === id ? ' chip-active' : ''}`}
+              onClick={() => setOpenCitation(openCitation === id ? null : id)}
+              aria-expanded={openCitation === id}
+            >
+              {id}
+            </button>
+          ))}
+        </div>
+      )}
+      {openCitation && (
+        <blockquote className="excerpt">
+          {excerpt ? (
+            <>
+              <strong>{excerpt.section}</strong> {excerpt.text}
+            </>
+          ) : (
+            'The excerpt text is shown once the run has finished.'
+          )}
+        </blockquote>
+      )}
+    </article>
+  )
+}
+
+function CriticCard({ feedback }: { feedback: CriticFeedback }) {
+  return (
+    <article className="card card-critic">
+      <header>
+        <h3>Critic</h3>
+        <span className={`badge ${feedback.agrees ? 'badge-ok' : 'badge-warn'}`}>
+          {feedback.agrees ? '✓ Agrees' : '✗ Objects'}
+        </span>
+      </header>
+      {feedback.objections.length > 0 && (
+        <>
+          <h4>Objections</h4>
+          <ul>
+            {feedback.objections.map((objection) => (
+              <li key={objection}>{objection}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {feedback.missing_context.length > 0 && (
+        <>
+          <h4>Missing context</h4>
+          <ul>
+            {feedback.missing_context.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </article>
+  )
+}
+
+function OutcomeBanner({ kind, rounds }: { kind: 'consensus' | 'unresolved'; rounds: number }) {
+  return kind === 'consensus' ? (
+    <p className="banner banner-ok">Consensus reached in round {rounds}.</p>
+  ) : (
+    <p className="banner banner-warn">
+      Unresolved disagreement: the round limit ({rounds}) was reached and the critic still objects. Treat the thesis
+      with caution.
+    </p>
+  )
+}
+
+function AuditorCard({ verdict }: { verdict: AuditorVerdict }) {
+  return (
+    <article className={`card card-auditor ${verdict.is_grounded ? 'card-ok' : 'card-warn'}`}>
+      <header>
+        <h3>Auditor (fact check)</h3>
+        <span className={`badge ${verdict.is_grounded ? 'badge-ok' : 'badge-warn'}`}>
+          {verdict.is_grounded ? '✓ Grounded in the evidence' : '✗ Unsupported claims found'}
+        </span>
+      </header>
+      {verdict.unsupported_claims.length > 0 && (
+        <ul>
+          {verdict.unsupported_claims.map((claim) => (
+            <li key={claim}>{claim}</li>
+          ))}
+        </ul>
+      )}
+      <p className="muted">{verdict.notes}</p>
+    </article>
+  )
+}

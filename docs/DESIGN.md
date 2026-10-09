@@ -238,3 +238,37 @@ sequenceDiagram
 - **Stream ordering detail:** each poll reads the run **status before** the new events. The worker commits every event before it marks the run finished, so a finished status guarantees all events are visible. The other order could end the stream one event early.
 - **Quota:** at most 1 active run and 5 runs per rolling 24 hours per user. It is checked before any LLM call. A failed ticker extraction creates no run and costs no quota.
 - **Failure messages:** errors are stored as a user-safe message plus the exception type, never a stack trace.
+
+## 12. Frontend (Stage 7)
+
+React 19 + TypeScript + Vite, `react-router-dom`, plain CSS. Tests use Vitest + Testing Library (jsdom).
+
+```mermaid
+flowchart LR
+    G[Google Identity Services<br/>Sign in with Google] -- ID token --> AP[AuthProvider<br/>memory + sessionStorage,<br/>auto sign-out at expiry]
+    AP --> API[api/client.ts<br/>Bearer token, ApiError,<br/>401 -> sign out]
+    AP --> SSE[api/sse.ts<br/>fetch + SSE parser,<br/>Last-Event-ID reconnect]
+    API --> P1[NewResearchPage<br/>POST /research, quota]
+    API --> P3[HistoryPage<br/>GET /history]
+    SSE --> RR[runs/runReducer.ts<br/>events -> rounds, outcome, auditor]
+    RR --> RV[runs/RunView.tsx]
+    API --> P2[RunPage /runs/:id<br/>GET run, stream, GET final output]
+    P2 --> RR
+```
+
+| Route | Page |
+|---|---|
+| (signed out) | `LoginPage`: Google's button only |
+| `/` | `NewResearchPage`: query, example chips, max rounds 1–3, quota used, server errors (422/429/503) |
+| `/runs/:runId` | `RunPage`: loads the run, then streams (or replays) its events into `RunView`, then fetches the final output so citation chips can show excerpt text |
+| `/history` | `HistoryPage`: the user's runs with status, outcome and thesis |
+
+- **Token handling:** the Google ID token is held in React state and in `sessionStorage` (this tab only).
+  - The payload is decoded **only** to show the user's email and to schedule the automatic sign-out about a minute before expiry.
+  - The backend verifies the token on every request.
+  - Any 401 signs the user out.
+- **Live stream:** `streamRun()` reads `GET /research/{id}/stream` with `fetch()`, because `EventSource` cannot send the Authorization header.
+  - An incremental `SSEParser` handles messages split across network chunks, and ignores heartbeat comments.
+  - If the connection drops without an `end` event, it reconnects with `Last-Event-ID`, up to 3 times. HTTP errors such as 404 are not retried.
+- **One reducer for live and replay:** `runReducer` groups events into rounds (analyst → critic → result) and records the auditor verdict and errors. It ignores event ids it has already applied, so a live run, a reconnect and a finished run replayed from history all render identically.
+- **Configuration:** `frontend/.env` holds `VITE_API_URL` and `VITE_GOOGLE_CLIENT_ID` (gitignored; `.env.example` is committed). The dev server is pinned to port 5173, which must match the backend's `FRONTEND_ORIGIN` and the OAuth client's authorized JavaScript origin.
