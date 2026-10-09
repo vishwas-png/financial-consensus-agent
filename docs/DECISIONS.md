@@ -122,3 +122,30 @@ Each entry: the choice, the alternatives considered, and the trade-off.
 - **Alternatives:** `qwen/qwen3.8-27b` for both; keep Llama by moving to another provider (Together, Fireworks).
 - **Why:** in Stage 2 both Llama ids returned 404 and Groq's `models.list()` had no Llama chat models left. gpt-oss models are open-weight, support tool calling on Groq, and keep the small/large split from the original design. Chosen by the owner.
 - **Trade-off:** gpt-oss are reasoning models: they spend tokens thinking before answering, so small `max_completion_tokens` limits produce empty replies. Supersedes D11.
+
+## Stage 3
+
+### D24. `consensus_check` = a node that updates state + a pure router
+- **Alternatives:** do everything in the conditional-edge function (as the original spec suggested: "increments `iteration_count` and returns `continue`").
+- **Why:** LangGraph routing functions can only pick the next node; any state change they make is discarded. So the node records the round (`iteration_count += 1`, `forced_exit`), and `route_after_consensus` is a pure function of that state, so it is easy to unit test.
+- **Trade-off:** one extra graph step per round (counted in the recursion limit, D26).
+
+### D25. Explicit `forced_exit` flag in `GraphState`
+- **Alternatives:** infer it later from `iteration_count == max_iterations and not agrees`.
+- **Why:** "forced exit" must be shown to users and stored as unresolved disagreement. One explicit, tested field is harder to get wrong than repeating the inference in the API, UI and evals.
+- **Trade-off:** one more field than the original GraphState spec.
+
+### D26. `recursion_limit` derived from `max_iterations` as a second safety net
+- **Alternatives:** rely on LangGraph's default.
+- **Why:** LangGraph 1.2 defaults to **10007** steps (not 25 as in older versions). If the guardrail had a bug, a run could make thousands of LLM calls. We set `1 + 3 x max_iterations + 1`, so a broken router stops within about one extra round with `GraphRecursionError`. A test monkeypatches the router to always `continue` and checks that the run stops.
+- **Trade-off:** if nodes are added to the loop, `STEPS_PER_ROUND` must be updated (the large-cap test would fail if it isn't).
+
+### D27. `max_iterations` = total Analyst rounds (owner's decision)
+- **Alternatives:** the literal original spec, where `iteration_count` counted revisions, so `max_iterations=3` allowed 4 analyst rounds.
+- **Why:** "max_iterations=3 means 3 rounds" is what a reader expects, and it makes cost easy to state: at most `2 x max_iterations` reasoning-model calls (+ repairs). `iteration_count` = completed rounds; `forced_exit` is set when round `max_iterations` ends without agreement. CLAUDE.md and DESIGN.md were updated to match.
+- **Trade-off:** differs from the first wording of the spec. Tests cover both edges (agree in the last round = consensus; disagree in the last round = forced).
+
+### D28. Agents get the full market-data JSON plus a units note
+- **Alternatives:** a hand-written text summary of the data; only selected fields.
+- **Why:** the JSON is already curated (D12) and small (a few thousand tokens). Giving both agents the identical JSON means the critic can check every number the analyst cites. The units note (D17) lives in one constant shared by both prompts.
+- **Trade-off:** ~52 weekly price points use tokens on every call; can be down-sampled if cost matters (Stage 8).

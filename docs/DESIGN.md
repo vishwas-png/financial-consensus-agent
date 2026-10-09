@@ -23,19 +23,21 @@ flowchart LR
     fetch_data --> analyst
     analyst --> critic
     critic --> consensus_check{consensus_check}
-    consensus_check -- "continue<br/>(disagrees and iteration_count < max_iterations)" --> analyst
-    consensus_check -- "done<br/>(agrees OR iteration_count >= max_iterations)" --> auditor
+    consensus_check -- "continue<br/>(disagrees and rounds < max_iterations)" --> analyst
+    consensus_check -- "done<br/>(agrees OR rounds >= max_iterations)" --> auditor
     auditor --> END((end))
 ```
 
 - `fetch_data`: pulls market data (yfinance) and relevant SEC filing chunks (ChromaDB) into state.
 - `analyst`: produces an `AnalystOutput` (thesis, data points, reasoning, confidence, citations).
 - `critic`: produces `CriticFeedback` (agrees, objections, missing context).
-- `consensus_check` (guardrail):
-  - returns `"done"` if `critic_feedback.agrees` is true, **or** if `iteration_count >= max_iterations`;
-  - otherwise increments `iteration_count` and returns `"continue"` (back to `analyst`).
+- `consensus_check` (guardrail). `max_iterations` = maximum Analyst rounds **in total** (default 3); `iteration_count` = completed rounds.
+  - After each critic step, the `consensus_check` node increments `iteration_count` and sets `forced_exit=True` if the cap is reached while the Critic still disagrees.
+  - The router then returns `"done"` if `critic_feedback.agrees` is true, **or** if `iteration_count >= max_iterations`; otherwise `"continue"` (back to `analyst`).
+  - Split into node + router because LangGraph routing functions cannot update state.
+  - Backstop: `recursion_limit = 1 + 3 x max_iterations + 1` steps, so even a broken router cannot loop beyond about one extra round.
   - A forced exit still goes to the Auditor and is flagged as **unresolved disagreement**, so the UI and stored result never present a forced exit as consensus.
-- `auditor`: produces an `AuditorVerdict` (is_grounded, unsupported_claims, notes) by comparing claims against retrieved filing text.
+- `auditor` (Stage 5; until then `done` goes straight to END): produces an `AuditorVerdict` (is_grounded, unsupported_claims, notes) by comparing claims against retrieved filing text.
 
 Why a hard cap: two LLMs can disagree forever. Without a cap, cost and latency are unbounded and a run might never finish.
 

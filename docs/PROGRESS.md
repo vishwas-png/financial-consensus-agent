@@ -96,3 +96,48 @@ Stage 2: single Groq call with a Pydantic tool schema (`MarketDataToolInput`), r
 
 ### Next
 Stage 3: the LangGraph Analyst/Critic loop with the `consensus_check` iteration guardrail and forced-exit tests. Uses `call_with_schema` for `AnalystOutput` / `CriticFeedback` and `REASONING_MODEL`.
+
+## Stage 3: LangGraph Analyst/Critic loop with iteration guardrail
+
+### Approved plan (with the owner's change)
+1. **Dependency:** `langgraph` pinned.
+2. **State:** `GraphState.forced_exit: bool = False`.
+3. **Prompts:** `ANALYST_PROMPT` and `CRITIC_PROMPT` share `DATA_UNITS_NOTE`.
+4. **Nodes in `core/nodes/`:**
+   - `fetch_data` (yfinance, injectable factory);
+   - `analyst` (`call_with_schema` → `AnalystOutput`, tool `submit_analysis`, `REASONING_MODEL`; revisions see the previous output and the critique);
+   - `critic` (→ `CriticFeedback`, tool `submit_critique`);
+   - `consensus_check` (node + pure router).
+5. **Owner's change:** `max_iterations=3` means **3 Analyst rounds in total**. `iteration_count` is the number of completed rounds, and `forced_exit` is set when the last round ends without agreement.
+6. **`core/graph.py`:** `build_graph`, `run_research`, `stream_research`, a CLI, and a `recursion_limit` derived from the cap.
+7. **Tests:** `test_guardrail.py` (node/router unit tests + whole-graph tests with a fake LLM), `test_nodes.py`, and one live test.
+8. **Docs and git:** DESIGN, DECISIONS D24-D28, README, PROGRESS, DEVLOG. Branch `stage/3-debate-loop`, tag `stage-3-debate-loop`.
+9. **Out of scope:** the Auditor (Stage 5; `done` goes to END for now) and filing chunks (Stage 4).
+
+### What was built
+| File | Purpose |
+|---|---|
+| `backend/src/core/state.py` | + `forced_exit` |
+| `backend/src/core/prompts.py` | `DATA_UNITS_NOTE`, `ANALYST_PROMPT`, `CRITIC_PROMPT` |
+| `backend/src/core/nodes/fetch_data.py`, `analyst.py`, `critic.py` | Graph nodes |
+| `backend/src/core/nodes/consensus_check.py` | Guardrail: `consensus_check` node + `route_after_consensus` |
+| `backend/src/core/graph.py` | Graph build/compile, `run_research`, `stream_research`, CLI |
+| `backend/tests/fakes.py` | `ToolRoutingClient`: a fake LLM scripted per tool and per round |
+| `backend/tests/test_guardrail.py` | 21 offline tests + 1 live test |
+| `backend/tests/test_nodes.py` | 9 node tests |
+| `CLAUDE.md`, `docs/DESIGN.md` | Updated guardrail semantics |
+
+### How it was tested
+- `pytest -q` → **107 passed, 7 deselected**.
+- Guardrail tests:
+  - A Critic that never agrees with cap 3 gives exactly 3 Analyst and 3 Critic calls, `iteration_count=3` and `forced_exit=True`.
+  - Agreement in round 1 or 2 stops early, and agreement in round 3 is not marked as forced.
+  - Cap 10 terminates.
+  - A router that always returns `continue` (monkeypatched) is stopped by the recursion limit with `GraphRecursionError`.
+- `pytest -m live` → **7 passed** (including a 1-round live debate).
+- CLI:
+  - `python -m src.core.graph AAPL 3` reached consensus in round 2. In round 1 the Critic pointed out that quarterly revenue growth had been presented as annual growth, and the Analyst corrected it.
+  - `MSFT 2` reached consensus in round 1.
+
+### Next
+Stage 4: RAG over SEC filings. Parse the 10-K, chunk it semantically, store it in ChromaDB with metadata filtering, retrieve passages into `filing_chunks`, and have the Analyst cite them.

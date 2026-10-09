@@ -2,7 +2,7 @@
 
 Sign in with Google, enter a stock ticker, and watch two AI agents argue about it live. An **Analyst** agent writes an investment thesis from market data and SEC filings; a **Critic** agent challenges it; they loop until they agree or hit a hard iteration cap. An **Auditor** agent (LLM-as-a-Judge) then checks every final claim against the retrieved SEC filing text and flags anything unsupported. All financial reasoning lives in prompts; the code plumbs data in and validated, structured output out.
 
-> Status: **Stages 0-2 complete** (design, schemas, DB models, market data ingestion, LLM tool calling). Later stages are planned below.
+> Status: **Stages 0-3 complete** (design, schemas, DB models, market data, LLM tool calling, Analyst/Critic debate loop with iteration cap). Later stages are planned below.
 
 ## Architecture
 
@@ -78,6 +78,7 @@ pytest -m live                                                # tests that hit r
 python -c "from src.db.session import init_db; init_db()"     # create local DB tables
 python -m src.tools.market_data AAPL                          # print a market data snapshot as JSON
 python -m src.core.tool_calling "How is Apple doing?"         # LLM picks the ticker, then fetches data
+python -m src.core.graph AAPL 3                               # live Analyst/Critic debate, max 3 rounds
 ```
 
 Backend server, frontend and evals: added in Stages 6, 7 and 5.
@@ -89,7 +90,7 @@ Backend server, frontend and evals: added in Stages 6, 7 and 5.
 | 0 | Design, schemas, GraphState, DB models | ✅ Done |
 | 1 | Data ingestion (yfinance) | ✅ Done |
 | 2 | Tool calling + structured extraction (Groq) | ✅ Done |
-| 3 | LangGraph Analyst/Critic loop with iteration guardrail | Planned |
+| 3 | LangGraph Analyst/Critic loop with iteration guardrail | ✅ Done |
 | 4 | RAG over SEC filings (ChromaDB) | Planned |
 | 5 | Auditor (LLM-as-a-Judge) + eval harness | Planned |
 | 6 | FastAPI: Google auth, quota, persistence, SSE | Planned |
@@ -103,7 +104,9 @@ Backend server, frontend and evals: added in Stages 6, 7 and 5.
 - US tickers only (no exchange suffixes such as `.NS`).
 - yfinance is an unofficial data source and can break or rate-limit.
 - Free-tier Groq rate limits cap throughput.
-- The debate loop is capped; a forced exit is reported as unresolved disagreement rather than consensus.
+- The debate loop is capped at `max_iterations` rounds (default 3); a forced exit is reported as unresolved disagreement rather than consensus.
+- A Critic "agreeing" is an LLM judgement, not proof the thesis is right; the Critic can be too lenient.
+- On Groq's free tier, the reasoning model hits rate limits within a single debate; calls are retried with backoff, so runs can take a minute or more.
 
 ## License
 
