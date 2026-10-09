@@ -8,3 +8,6 @@ pytest==9.1.1
 yfinance==1.7.0
 pandas==3.0.6
 numpy==2.5.3
+
+# Stage 2: LLM client (Groq)
+groq==1.7.0
