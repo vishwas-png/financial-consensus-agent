@@ -81,7 +81,7 @@ python -m src.tools.market_data AAPL                          # print a market d
 python -m src.core.tool_calling "How is Apple doing?"         # LLM picks the ticker, then fetches data
 python -m src.core.graph AAPL 3                               # live Analyst/Critic debate, max 3 rounds
 python -m src.rag.retriever AAPL "supply chain risk"          # search the latest 10-K (downloads + indexes it on first use)
-python -m src.rag.ingest path	ok.pdf AAPL 2025              # index a 10-K PDF you downloaded yourself
+python -m src.rag.ingest path\to\10k.pdf AAPL 2025              # index a 10-K PDF you downloaded yourself
 ```
 
 Backend server, frontend and evals: added in Stages 6, 7 and 5.
