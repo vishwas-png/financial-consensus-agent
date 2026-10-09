@@ -141,3 +141,55 @@ Stage 3: the LangGraph Analyst/Critic loop with the `consensus_check` iteration 
 
 ### Next
 Stage 4: RAG over SEC filings. Parse the 10-K, chunk it semantically, store it in ChromaDB with metadata filtering, retrieve passages into `filing_chunks`, and have the Analyst cite them.
+
+## Stage 4: RAG over SEC filings
+
+### Approved plan (with the owner's choices)
+1. **Owner's choices:** option A, so EDGAR 10-K HTML downloads plus optional manual PDFs. `SEC_USER_AGENT` lives only in `backend/.env`; `.env.example` has a placeholder.
+2. **`rag/edgar.py`:** looks up ticker → CIK, finds the latest 10-K, and downloads it with the SEC User-Agent, throttled and cached in `data/filings/`.
+3. **`rag/ingest.py`:** HTML/PDF text extraction, 10-K Item sections, section-aware semantic chunking, deterministic ids and metadata.
+4. **`rag/retriever.py`:**
+   - a ChromaDB `FilingStore` (upsert, latest filing, pre-filtered query);
+   - coverage-first retrieval over 6 topic queries;
+   - lazy ingestion from EDGAR.
+5. **`structured_output.call_with_schema`:** an `extra_check` hook, used to reject invented citations.
+6. **Wiring:** `fetch_data` fills `filing_chunks`; a missing filing gives `[]` and a warning. Analyst and critic share one evidence block, and the analyst cites chunk ids.
+7. **Tests and docs:** offline tests with an in-memory Chroma and a fake embedder, plus live tests. DECISIONS D29–D34, and a RAG section in DESIGN.
+8. **Git:** branch `stage/4-rag`, tag `stage-4-rag`.
+
+### What was built
+| File | Purpose |
+|---|---|
+| `backend/src/rag/edgar.py` | EDGAR client (User-Agent, throttle, cache, errors) |
+| `backend/src/rag/embeddings.py` | `Embedder` protocol + `LocalEmbedder` (MiniLM via ONNX) |
+| `backend/src/rag/ingest.py` | Extraction, sections, semantic chunking, chunk ids; PDF CLI |
+| `backend/src/rag/retriever.py` | `FilingStore`, `retrieve_for_agents`, `get_filing_chunks`; CLI |
+| `backend/src/core/nodes/context.py` | Shared evidence block (compact market JSON + excerpts), chunk-id parsing |
+| `backend/src/core/nodes/fetch_data.py`, `analyst.py`, `critic.py`, `graph.py` | RAG wiring and citation check |
+| `backend/src/core/structured_output.py` | `extra_check` hook |
+| `backend/src/core/prompts.py` | `FILING_RULES_NOTE`, citation rules |
+| `backend/src/clients/groq_client.py` | Retry cap 60s, 4 attempts (D35) |
+| `backend/tests/test_edgar.py`, `test_ingest.py`, `test_retriever.py` | 10 + 15 + 10 offline tests, 1 live |
+| `backend/tests/test_nodes.py`, `test_tool_calling.py`, `test_groq_client.py` | New tests: filing, citation, `extra_check` and retry |
+| `.gitignore`, `CLAUDE.md` | `**/data/filings/` fix |
+
+**Changes from the plan:**
+- Added D35 and a fix commit for the Groq token limit, after a live debate failed.
+- Added the `.gitignore` anchoring fix.
+- The live citation check went into the existing live debate test instead of a separate test.
+
+### How it was tested
+- `pytest -q`: **156 passed, 8 deselected**.
+- `pytest -m live`: **8 passed**, including:
+  - the real AAPL 10-K ingested from EDGAR (139 chunks);
+  - a risk query that returns only Item 1A chunks;
+  - a live debate whose citations are all among the provided ids.
+- `python -m src.rag.retriever AAPL "supply chain and manufacturing risk"`: all of the top 5 hits are relevant Item 1A passages.
+- `python -m src.core.graph AAPL 2`: consensus in round 2 after 105s.
+  - Round 1 cited 4 chunks. The critic flagged filing risks the analyst had ignored (legal proceedings, natural disasters).
+  - Round 2 added citations `1A-010` and `3-005` and corrected annual revenue growth to about 6%.
+
+### Next
+Stage 5 has two parts:
+- An Auditor (LLM-as-a-Judge) that checks the final claims against the cited filing text and sets `auditor_verdict`.
+- A standalone eval harness in `backend/evals/`: a golden set, scored runs, and judge calibration.
