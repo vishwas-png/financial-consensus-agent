@@ -71,6 +71,7 @@ MAX_ACTIVE_RUNS_PER_USER: int = 1    # pending/running runs a user may have at o
 # Runs executing at once across ALL users (Groq free tier + host memory). Set to 1 on small hosts.
 MAX_CONCURRENT_RUNS: int = int(os.getenv("MAX_CONCURRENT_RUNS", "2"))
 MAX_USER_ITERATIONS: int = 3         # highest max_iterations a user may request
+RUN_TIMEOUT_SECONDS: int = 10 * 60   # a run still going after this is stopped (checked between steps)
 
 # --- Production checks ---
 REQUIRED_IN_PRODUCTION = ("GROQ_API_KEY", "GOOGLE_CLIENT_ID", "DATABASE_URL", "FRONTEND_ORIGIN", "SEC_USER_AGENT")

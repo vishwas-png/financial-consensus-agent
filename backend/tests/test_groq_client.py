@@ -146,3 +146,8 @@ def test_default_client_tries_four_times() -> None:
     with pytest.raises(LLMUnavailableError):
         client.chat([], model="m")
     assert len(sdk.requests) == 4
+
+
+def test_sdk_request_timeout_is_set() -> None:
+    client = GroqClient(api_key="gsk_test_placeholder")
+    assert client._sdk.timeout == 60.0  # not the SDK default of 10 minutes

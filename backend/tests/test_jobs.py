@@ -155,3 +155,50 @@ def test_real_thread_pool(session_factory: sessionmaker) -> None:
 ])
 def test_user_messages(error: Exception, expected: str) -> None:
     assert expected in user_message(error, "AAPL")
+
+
+# ---------- Run timeout (Stage 8) ----------
+
+class FakeClock:
+    """Each call advances time by `step` seconds."""
+
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
+
+
+def test_run_stops_after_timeout_and_closes_the_graph(session_factory: sessionmaker) -> None:
+    closed: list[bool] = []
+
+    def endless_graph(ticker: str, max_iterations: int = 3) -> Iterator[tuple[str, dict[str, Any]]]:
+        try:
+            yield "fetch_data", {"raw_data": RAW, "filing_chunks": []}
+            while True:
+                yield "analyst", {"analyst_output": ANALYSIS}
+        finally:
+            closed.append(True)  # runs when the worker closes the generator
+
+    run_id = new_run(session_factory)
+    worker = RunWorker(session_factory, run_graph=endless_graph, executor=InlineExecutor(),
+                       run_timeout_seconds=100, clock=FakeClock(step=30))
+    worker.submit(run_id, "AAPL", 3)
+
+    run, events = load(session_factory, run_id)
+    assert run.status == RunStatus.FAILED
+    assert events[-1].step == RunStep.ERROR
+    assert events[-1].content["type"] == "RunTimeoutError"
+    assert "took too long" in events[-1].content["message"]
+    assert len(events) < 10  # stopped soon after the deadline, not endless
+    assert closed == [True]
+
+
+def test_run_within_timeout_is_unaffected(session_factory: sessionmaker) -> None:
+    run_id = new_run(session_factory)
+    worker = RunWorker(session_factory, run_graph=fake_graph, executor=InlineExecutor(),
+                       run_timeout_seconds=100, clock=FakeClock(step=1))
+    worker.submit(run_id, "AAPL", 1)
+    assert load(session_factory, run_id)[0].status == RunStatus.DONE

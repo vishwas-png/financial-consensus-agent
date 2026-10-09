@@ -24,6 +24,7 @@ RETRYABLE_ERRORS = (
     groq.InternalServerError,
 )
 MAX_RETRY_AFTER_SECONDS = 60.0  # Groq token-per-minute resets can take ~50s
+REQUEST_TIMEOUT_SECONDS = 60.0  # one HTTP request to Groq; a timeout counts as a retryable error
 
 
 class LLMError(Exception):
@@ -84,11 +85,13 @@ class GroqClient:
         base_delay: float = 1.0,
         sleep: Callable[[float], None] = time.sleep,
         sdk: Any = None,
+        request_timeout: float = REQUEST_TIMEOUT_SECONDS,
     ) -> None:
         if sdk is None:
             if not api_key:
                 raise LLMConfigError("GROQ_API_KEY is not set. Add it to backend/.env.")
-            sdk = groq.Groq(api_key=api_key, max_retries=0)
+            # The SDK's default timeout is 10 minutes; a hung request would block a worker thread
+            sdk = groq.Groq(api_key=api_key, max_retries=0, timeout=request_timeout)
         self._sdk = sdk
         self.max_attempts = max_attempts
         self.base_delay = base_delay
