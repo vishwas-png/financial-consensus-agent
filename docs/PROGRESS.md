@@ -64,3 +64,35 @@ Changes from the plan (small): `annual_financials` uses `fiscal_year_end` (ISO d
 
 ### Next
 Stage 2: single Groq call with a Pydantic tool schema (`MarketDataToolInput`), rejecting malformed tool arguments. Needs `GROQ_API_KEY`.
+
+## Stage 2: Tool calling + structured extraction (Groq)
+
+### Approved plan
+1. **`src/clients/groq_client.py`:** `GroqClient.chat()` with SDK retries off and our own exponential backoff on 429/5xx/connection/timeout (honours `retry-after`, capped at 30s). No retry on 400/401/404. `tool_use_failed` becomes `MalformedToolCallError`. A missing key raises `LLMConfigError`.
+2. **`src/core/structured_output.py`:** `pydantic_to_tool()` and `call_with_schema()`. The call is forced with `tool_choice`, the arguments are validated with Pydantic, and there is one repair attempt with the error shown to the model; after that it raises `ToolCallError`.
+3. **`src/core/prompts.py`:** `TICKER_EXTRACTION_PROMPT`.
+4. **`src/core/tool_calling.py`:** `extract_ticker()` and `research_request_to_market_data()` (LLM, then yfinance), plus a CLI.
+5. **Tests:** `test_groq_client.py`, `test_tool_calling.py` (offline fakes) and live tests.
+6. **Docs, git:** DECISIONS D18-D22, branch `stage/2-tool-calling`, tag `stage-2-tool-calling`.
+
+**Change made during the build (approved by the owner):** Groq no longer serves Llama chat models, so the models are now `openai/gpt-oss-20b` (tool calling) and `openai/gpt-oss-120b` (reasoning). CLAUDE.md, README and config were updated, and D23 was added.
+
+### What was built
+| File | Purpose |
+|---|---|
+| `backend/src/clients/groq_client.py` | Groq wrapper: retry/backoff, error types |
+| `backend/src/core/structured_output.py` | Generic schema-forced tool call with repair |
+| `backend/src/core/prompts.py` | Ticker extraction prompt |
+| `backend/src/core/tool_calling.py` | Request → ticker → market data; CLI |
+| `backend/tests/test_groq_client.py` | 11 offline tests + 1 live |
+| `backend/tests/test_tool_calling.py` | 15 offline tests + 4 live |
+| `backend/src/config.py`, `CLAUDE.md`, `README.md` | gpt-oss model names |
+| `backend/requirements.txt` | + groq 1.7.0 |
+
+### How it was tested
+- `pytest -q` → **77 passed, 6 deselected** (51 earlier + 26 new).
+- `pytest -m live` → **6 passed**: Groq chat; Apple→AAPL, Tesla→TSLA, Berkshire class B→BRK-B; Microsoft end to end; yfinance AAPL.
+- CLI: "How is Apple doing?" → AAPL snapshot. "Berkshire Hathaway B shares" → BRK-B snapshot. "Reliance Industries" → `ToolCallError` after the repair attempt (first a refusal, then an invalid ticker), exit 1.
+
+### Next
+Stage 3: the LangGraph Analyst/Critic loop with the `consensus_check` iteration guardrail and forced-exit tests. Uses `call_with_schema` for `AnalystOutput` / `CriticFeedback` and `REASONING_MODEL`.
