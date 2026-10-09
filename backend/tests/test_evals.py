@@ -222,3 +222,61 @@ def test_summary_and_saved_results(tmp_path) -> None:  # type: ignore[no-untyped
     path = save_results(summary, {"judge": judge, "extraction": extraction}, results_dir=tmp_path)
     assert '"correct": true' in path.read_text(encoding="utf-8")
     assert to_dict(judge[0])["case_id"] == case.id
+
+
+# ---------- Judge calibration ----------
+
+def test_calibration_report_with_repeats_and_errors() -> None:
+    from evals.judge_calibration import calibration_report, run_calibration
+    from src.clients.groq_client import LLMUnavailableError
+
+    # A judge that always says "grounded", except it errors on its very first call
+    class FlakyGroundedClient(ToolRoutingClient):
+        def chat(self, messages, model, tools=None, tool_choice=None, temperature=0.0):  # type: ignore[no-untyped-def]
+            if not self.calls:
+                self.calls.append({"tool": AUDITOR_TOOL_NAME, "messages": messages, "model": model})
+                raise LLMUnavailableError("rate limited")
+            return super().chat(messages, model, tools, tool_choice, temperature)
+
+    client = FlakyGroundedClient({AUDITOR_TOOL_NAME: grounded_verdict})
+    runs = run_calibration(GOLDEN, client, repeats=2)
+    report = calibration_report(runs)
+
+    flawed = sum(not c.expected_is_grounded for c in GOLDEN.judge_cases)
+    clean = len(GOLDEN.judge_cases) - flawed
+    assert report["errors"] == 1
+    assert report["verdicts_scored"] == 2 * len(GOLDEN.judge_cases) - 1
+    # Always "grounded": catches nothing (recall 0), never flags (precision undefined)
+    assert report["confusion"]["tp"] == 0 and report["confusion"]["fp"] == 0
+    assert report["confusion"]["fn"] + report["confusion"]["tn"] == report["verdicts_scored"]
+    assert report["recall"] == 0.0 and report["precision"] is None
+    assert report["agreement_rate"] == 1.0  # consistent, just wrong
+    majority = [case["majority_correct"] for case in report["per_case"].values()]
+    assert majority.count(True) == clean and majority.count(False) == flawed
+
+
+def test_calibration_report_perfect_judge(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from evals.judge_calibration import calibration_report, run_calibration, save_report
+
+    labels = {c.analysis.thesis: c for c in GOLDEN.judge_cases}
+
+    class OracleClient(ToolRoutingClient):
+        """Answers with the manual label, naming every planted claim."""
+
+        def chat(self, messages, model, tools=None, tool_choice=None, temperature=0.0):  # type: ignore[no-untyped-def]
+            content = messages[1]["content"]
+            case = next(c for thesis, c in labels.items() if thesis in content)
+            verdict = AuditorVerdict(
+                is_grounded=case.expected_is_grounded,
+                unsupported_claims=[f"{p} -- planted" for p in case.planted_claims],
+                notes="oracle",
+            )
+            self.responders = {AUDITOR_TOOL_NAME: lambda n: verdict}
+            return super().chat(messages, model, tools, tool_choice, temperature)
+
+    runs = run_calibration(GOLDEN, OracleClient({}), repeats=1)
+    report = calibration_report(runs)
+    assert report["precision"] == 1.0 and report["recall"] == 1.0 and report["accuracy"] == 1.0
+    assert report["claim_recall"] == 1.0
+    path = save_report(report, runs, results_dir=tmp_path)
+    assert path.name.startswith("calibration_") and path.exists()
