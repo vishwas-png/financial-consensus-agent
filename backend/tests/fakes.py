@@ -1,6 +1,8 @@
-"""Shared test doubles for LLM-driven code."""
+"""Shared test doubles for LLM-driven code and embeddings."""
 
+import hashlib
 import json
+import re
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -37,3 +39,28 @@ class ToolRoutingClient:
         answer = self.responders[tool_name](call_number)
         payload = answer.model_dump() if isinstance(answer, BaseModel) else answer
         return tool_call_message(json.dumps(payload), tool_name)
+
+
+class BagOfWordsEmbedder:
+    """Deterministic fake embedder: hashed word counts. Texts sharing words are 'similar'.
+
+    Good enough to test topic-change detection and vector search without
+    downloading a real embedding model.
+    """
+
+    DIMENSIONS = 256
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        vectors = []
+        for text in texts:
+            vector = [0.0] * self.DIMENSIONS
+            for word in re.findall(r"[a-z]{4,}", text.lower()):
+                vector[int(hashlib.md5(word.encode()).hexdigest(), 16) % self.DIMENSIONS] += 1.0
+            if not any(vector):
+                vector[0] = 1.0  # avoid all-zero vectors (undefined cosine)
+            vectors.append(vector)
+        return vectors
