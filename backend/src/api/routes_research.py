@@ -22,6 +22,7 @@ from src.api.quota import QUOTA_WINDOW, check_quota, lock_user_for_quota
 from src.clients.groq_client import LLMError, LLMUnavailableError
 from src.config import MAX_ACTIVE_RUNS_PER_USER, MAX_ITERATIONS, MAX_USER_ITERATIONS, RUNS_PER_DAY
 from src.core.structured_output import ToolCallError
+from src.core.tool_calling import NoUSListingError
 from src.db.models import (
     ResearchRun,
     RunEvent,
@@ -98,6 +99,11 @@ def start_research(
 
     try:
         ticker: str = request.app.state.ticker_extractor(body.query)
+    except NoUSListingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="That company doesn't appear to have a US stock listing. This app covers US-listed stocks only.",
+        ) from error
     except ToolCallError as error:
         # No run is created, so a failed extraction costs the user no quota
         raise HTTPException(

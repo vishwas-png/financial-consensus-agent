@@ -13,7 +13,7 @@ import yfinance as yf
 from src.clients.groq_client import GroqClient, LLMError
 from src.config import TOOL_CALL_MODEL
 from src.core.prompts import TICKER_EXTRACTION_PROMPT
-from src.core.schemas import MarketDataToolInput
+from src.core.schemas import MarketDataToolInput, TickerExtraction
 from src.core.structured_output import ToolCallError, call_with_schema
 from src.tools.market_data import MarketDataError, fetch_market_data
 
@@ -21,20 +21,30 @@ MARKET_DATA_TOOL_NAME = "get_market_data"
 MARKET_DATA_TOOL_DESCRIPTION = "Fetch a market data snapshot (price, valuation, financials) for one US stock ticker."
 
 
+class NoUSListingError(ToolCallError):
+    """The model says the company has no US stock listing (a clean refusal, not an error)."""
+
+
 def extract_ticker(user_request: str, client: GroqClient) -> MarketDataToolInput:
-    """Ask the LLM which ticker the user means. Returns validated tool arguments."""
+    """Ask the LLM which ticker the user means. Returns validated tool arguments.
+
+    Raises NoUSListingError if the model reports the company has no US listing.
+    """
     messages = [
         {"role": "system", "content": TICKER_EXTRACTION_PROMPT},
         {"role": "user", "content": user_request},
     ]
-    return call_with_schema(
+    extraction = call_with_schema(
         client,
         messages,
-        schema=MarketDataToolInput,
+        schema=TickerExtraction,
         tool_name=MARKET_DATA_TOOL_NAME,
         description=MARKET_DATA_TOOL_DESCRIPTION,
         model=TOOL_CALL_MODEL,
     )
+    if extraction.no_us_listing or extraction.ticker is None:
+        raise NoUSListingError("The company in the request has no US stock listing")
+    return MarketDataToolInput(ticker=extraction.ticker)
 
 
 def research_request_to_market_data(

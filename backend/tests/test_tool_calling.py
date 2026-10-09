@@ -5,12 +5,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from src.clients.groq_client import MalformedToolCallError
-from src.core.schemas import MarketDataToolInput
+from src.core.schemas import MarketDataToolInput, TickerExtraction
 from src.core.structured_output import ToolCallError, call_with_schema, pydantic_to_tool
 from src.core.tool_calling import (
     MARKET_DATA_TOOL_NAME,
+    NoUSListingError,
     extract_ticker,
     research_request_to_market_data,
 )
@@ -202,3 +204,37 @@ def test_live_end_to_end_microsoft() -> None:
     data = research_request_to_market_data("Give me a read on Microsoft", GroqClient())
     assert data["ticker"] == "MSFT"
     assert data["price"]["current"] is not None
+
+
+# ---------- "No US listing" escape hatch (Stage 8) ----------
+
+
+
+@pytest.mark.parametrize(("payload", "expected_ticker"), [
+    ({"ticker": "aapl"}, "AAPL"),
+    ({"ticker": "BRK-B", "no_us_listing": False}, "BRK-B"),
+    ({"no_us_listing": True}, None),
+    ({"ticker": "RIL", "no_us_listing": True}, None),  # a ticker next to no_us_listing is ignored
+])
+def test_ticker_extraction_schema_valid(payload: dict, expected_ticker: str | None) -> None:
+    assert TickerExtraction.model_validate(payload).ticker == expected_ticker
+
+
+@pytest.mark.parametrize("payload", [{}, {"no_us_listing": False}, {"ticker": "RELIANCE.NS"}, {"ticker": "AAPL", "x": 1}])
+def test_ticker_extraction_schema_invalid(payload: dict) -> None:
+    with pytest.raises(ValidationError):
+        TickerExtraction.model_validate(payload)
+
+
+def test_no_us_listing_raises_without_a_repair_attempt() -> None:
+    client = ScriptedClient([tool_call_message('{"no_us_listing": true}')])
+    with pytest.raises(NoUSListingError):
+        extract_ticker("What do you think of Reliance Industries?", client)
+    assert len(client.calls) == 1  # a clean refusal is not a mistake to repair
+
+
+def test_prompt_tells_the_model_how_to_decline() -> None:
+    client = ScriptedClient([tool_call_message('{"ticker": "AAPL"}')])
+    extract_ticker("Apple", client)
+    assert "no_us_listing" in client.calls[0]["messages"][0]["content"]
+    assert "no_us_listing" in json.dumps(client.calls[0]["tools"][0]["function"]["parameters"])

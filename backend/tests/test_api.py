@@ -341,3 +341,20 @@ def test_concurrent_requests_cannot_both_start_a_run_on_postgres() -> None:
     engine.dispose()
     assert sorted(statuses) == [202, 429], statuses
     assert runs == 1
+
+
+def test_company_without_us_listing_is_a_clear_422() -> None:
+    from src.core.tool_calling import NoUSListingError
+
+    def declining_extractor(query: str) -> str:
+        raise NoUSListingError("no US listing")
+
+    factory = memory_session_factory()
+    app = create_app(session_factory=factory, token_verifier=fake_verifier,
+                     worker=RunWorker(factory, run_graph=fake_graph, executor=InlineExecutor()),
+                     ticker_extractor=declining_extractor)
+    with TestClient(app) as client:
+        response = start(client, ALICE, query="What do you think of Reliance Industries?")
+        assert response.status_code == 422
+        assert "doesn't appear to have a US stock listing" in response.json()["detail"]
+        assert client.get("/history", headers=ALICE).json() == []  # no run, no quota used

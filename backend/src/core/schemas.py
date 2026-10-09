@@ -8,7 +8,7 @@ loudly instead of letting bad data flow further down the graph.
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # A US ticker: 1-5 letters, optionally a class-share suffix like "-B" (BRK-B, yfinance format).
 TICKER_PATTERN = re.compile(r"^[A-Z]{1,5}(-[A-Z])?$")
@@ -66,3 +66,26 @@ class MarketDataToolInput(BaseModel):
         if not TICKER_PATTERN.fullmatch(ticker):
             raise ValueError("ticker must be 1-5 letters, optionally followed by a class like '-B'")
         return ticker
+
+
+class TickerExtraction(BaseModel):
+    """What the extraction LLM call returns: a US ticker, OR an explicit "no US listing".
+
+    Without the escape hatch, a forced tool call pushes the model to invent a ticker for
+    companies that only trade abroad (seen live: Reliance Industries -> "RIL").
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str | None = None
+    no_us_listing: bool = False
+
+    @model_validator(mode="after")
+    def check_ticker_or_no_listing(self) -> "TickerExtraction":
+        if self.no_us_listing:
+            self.ticker = None  # ignore any ticker the model added anyway
+            return self
+        if self.ticker is None:
+            raise ValueError("give a ticker, or set no_us_listing to true if the company has no US listing")
+        self.ticker = MarketDataToolInput(ticker=self.ticker).ticker  # same rules as the tool input
+        return self
