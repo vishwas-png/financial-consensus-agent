@@ -285,3 +285,49 @@ Each entry: the choice, the alternatives considered, and the trade-off.
   - up to 0.5s of latency per event;
   - one thread and one cheap query per poll for each open stream;
   - fine for a handful of users, while pub/sub would scale further.
+
+## Stage 7
+
+### D48. TypeScript for the frontend (owner's choice)
+- **Alternatives:** plain JavaScript.
+- **Why:** the UI is mostly rendering backend JSON (events, verdicts, final output). `api/types.ts` mirrors those shapes once, as a discriminated union over `step`. A backend/frontend mismatch then fails `tsc` at build time instead of showing a blank card at runtime.
+- **Trade-off:** more syntax to read and explain. The types have to be updated by hand when the backend changes, because nothing generates them from OpenAPI.
+
+### D49. Google Identity Services used directly, no wrapper library
+- **Alternatives:** `@react-oauth/google`; Firebase Auth; a full OAuth redirect flow.
+- **Why:**
+  - The whole integration is about 60 lines: load the script once, `initialize({client_id, callback})`, `renderButton`, and `disableAutoSelect` on sign-out.
+  - One fewer dependency to trust, and every line can be explained.
+  - The ID token from the callback is exactly what the backend verifies (D5).
+- **Trade-off:** we maintain the small loader and its types ourselves, and there is no One Tap prompt or automatic silent re-sign-in.
+
+### D50. Token in memory + `sessionStorage`; decoded only for display and expiry
+- **Alternatives:** memory only (re-sign-in on every reload); `localStorage`; an httpOnly cookie set by the backend.
+- **Why:**
+  - `sessionStorage` survives a reload but is scoped to one tab and cleared when it closes. That is a smaller theft window than `localStorage`, and keeps the stateless Bearer design (no cookies, so no CSRF handling).
+  - The frontend never trusts the token's contents for security.
+  - Auto sign-out about a minute before `exp` avoids confusing failures with an expired token.
+- **Trade-off:**
+  - Like any token readable by JavaScript, it is exposed to XSS, so a strict CSP is a Stage 8 hardening item.
+  - Users must sign in again after about an hour, because there are no refresh tokens.
+
+### D51. fetch-based SSE client with `Last-Event-ID` reconnect, plus an id-deduplicating reducer
+- **Alternatives:** `EventSource` (cannot send the Authorization header, D42); a library such as `@microsoft/fetch-event-source`.
+- **Why:**
+  - The SSE format is simple (blank-line-separated `field: value` lines), so a tested 40-line parser beats a dependency.
+  - Reconnecting with `Last-Event-ID` resumes exactly where the stream stopped.
+  - The reducer ignores event ids at or below the last applied id, so a replay can never double a round.
+  - Live, resumed and history views share one code path.
+- **Trade-off:** our own parser must follow the SSE spec. It covers the subset our server emits (id, event, data, comments) and is unit-tested for chunk splitting and CRLF line endings.
+
+### D52. Citation excerpt text loaded after the run, not streamed
+- **Alternatives:** include all 8 excerpt texts in the `fetch_data` event.
+- **Why:** citation ids are known live, and the texts are already in `final_output.filing_chunks`. The run page fetches them once the stream ends, so the backend is unchanged and every `fetch_data` row stays small (D46). An already-opened chip fills in automatically when the text arrives.
+- **Trade-off:** while a run is live, clicking a citation shows "shown once the run has finished" instead of the text.
+
+### D53. Plain CSS and `react-router-dom`
+- **Alternatives:** Tailwind or a component library; state-based navigation without a router.
+- **Why:**
+  - One small stylesheet with CSS variables, a dark-mode override and a reduced-motion rule is enough for 4 screens, and adds no build tooling.
+  - The router gives each run a real URL (`/runs/:id`), so reloads, history links and sharing a run with yourself all work.
+- **Trade-off:** no ready-made component styling; the visual design is deliberately simple.

@@ -2,7 +2,7 @@
 
 Sign in with Google, enter a stock ticker, and watch two AI agents argue about it live. An **Analyst** agent writes an investment thesis from market data and SEC filings; a **Critic** agent challenges it; they loop until they agree or hit a hard iteration cap. An **Auditor** agent (LLM-as-a-Judge) then checks every final claim against the retrieved SEC filing text and flags anything unsupported. All financial reasoning lives in prompts; the code plumbs data in and validated, structured output out.
 
-> Status: **Stages 0-6 complete** (design, schemas, DB models, market data, LLM tool calling, Analyst/Critic debate loop with iteration cap, RAG over SEC 10-K filings with citations, Auditor (LLM-as-a-Judge), an eval harness, and a FastAPI backend with Google auth, quotas and live SSE streaming). Later stages are planned below.
+> Status: **Stages 0-7 complete**: the full app runs locally end to end (Google sign-in → live Analyst/Critic debate over market data and 10-K excerpts → Auditor fact-check → history). Deployment and hardening (Stage 8) are next.
 
 ## Architecture
 
@@ -59,6 +59,16 @@ pip install -r requirements.txt
 cp .env.example .env          # then edit .env with your values
 ```
 
+### Frontend (any OS, Node 20+)
+```bash
+cd frontend
+npm install
+cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
+```
+
+### Google sign-in (one-time)
+In Google Cloud Console → APIs & Services → Credentials, create an **OAuth client ID** of type **Web application** and add `http://localhost:5173` under **Authorized JavaScript origins**. Put the client ID in both `backend/.env` (`GOOGLE_CLIENT_ID`) and `frontend/.env` (`VITE_GOOGLE_CLIENT_ID`). Open the app at `http://localhost:5173` (not `127.0.0.1`), or Google will reject the origin.
+
 ## Environment variables (`backend/.env`)
 
 | Variable | Needed from | Description |
@@ -68,6 +78,13 @@ cp .env.example .env          # then edit .env with your values
 | `DATABASE_URL` | Stage 0 | SQLAlchemy URL. Defaults to `sqlite:///backend/app.db` |
 | `FRONTEND_ORIGIN` | Stage 6 | Allowed CORS origin, e.g. `http://localhost:5173` |
 | `SEC_USER_AGENT` | Stage 4 | Name and contact email sent to SEC EDGAR (required by the SEC), e.g. `Jane Doe jane@example.com` |
+
+### Frontend (`frontend/.env`)
+
+| Variable | Description |
+|---|---|
+| `VITE_API_URL` | Backend base URL, e.g. `http://localhost:8000` |
+| `VITE_GOOGLE_CLIENT_ID` | The same Web OAuth client ID as the backend's `GOOGLE_CLIENT_ID` |
 
 ## Running
 
@@ -118,7 +135,19 @@ uvicorn src.main:app --reload            # http://127.0.0.1:8000, interactive do
 
 Every authenticated call needs `Authorization: Bearer <Google ID token>` (the React frontend in Stage 7 obtains it with Google sign-in). Quota: 1 active run and 5 runs per rolling 24 hours per user.
 
-The frontend is added in Stage 7.
+### Frontend
+
+Start the backend (above), then in a second terminal:
+
+```bash
+cd frontend
+npm run dev                   # http://localhost:5173
+npm test                      # Vitest unit + component tests
+npm run lint                  # oxlint
+npm run build                 # type check + production build into dist/
+```
+
+Sign in with Google, ask about a company (e.g. "How is Apple doing?"), and watch the Analyst, Critic and Auditor steps arrive live. Past runs are under **History**.
 
 ## Project status
 
@@ -131,7 +160,7 @@ The frontend is added in Stage 7.
 | 4 | RAG over SEC filings (ChromaDB) | ✅ Done |
 | 5 | Auditor (LLM-as-a-Judge) + eval harness | ✅ Done |
 | 6 | FastAPI: Google auth, quota, persistence, SSE | ✅ Done |
-| 7 | React frontend | Planned |
+| 7 | React frontend | ✅ Done |
 | 8 | Deployment + hardening | Planned |
 | 9 | Extensions | Planned |
 
@@ -149,6 +178,8 @@ The frontend is added in Stage 7.
 - Runs execute in a thread pool inside the API process: at most 2 at once, a run in progress is lost (marked failed) if the server restarts, and the API must run as a single instance until a real job queue is added.
 - The quota check and run creation are not atomic, so two simultaneous requests from the same user could both start a run.
 - The live stream polls the database every 0.5 s (simple and robust, but not built for many concurrent viewers).
+- Sign-in lasts about an hour (Google ID token lifetime, no refresh tokens); after that you sign in again. The token lives in `sessionStorage`, so the app relies on not having XSS holes (a strict Content-Security-Policy is planned for Stage 8).
+- While a run is live, citation chips show the excerpt id only; the excerpt text appears once the run finishes.
 - The first RAG run downloads a ~80 MB embedding model and the 10-K, so it is slow (minutes on a slow connection).
 - The debate loop is capped at `max_iterations` rounds (default 3); a forced exit is reported as unresolved disagreement rather than consensus.
 - A Critic "agreeing" is an LLM judgement, not proof the thesis is right; the Critic can be too lenient.

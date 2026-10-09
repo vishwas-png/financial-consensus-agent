@@ -305,3 +305,51 @@ Stage 7: React (Vite) frontend.
 - Submit a ticker or question.
 - A live Analyst/Critic/Auditor stream via fetch-based SSE.
 - Per-user history.
+
+## Stage 7: React frontend
+
+### Approved plan (with the owner's choices)
+1. **Owner's choices:** TypeScript, and confirmed that `http://localhost:5173` is an authorized JavaScript origin for the OAuth client.
+2. **Libraries:** Vite + React + TypeScript; `react-router-dom`; Vitest + Testing Library + jsdom; plain CSS.
+3. **Sign-in:** Google Identity Services used directly (`AuthProvider`, `GoogleSignInButton`). The token is held in memory and `sessionStorage`, and the user is signed out automatically at expiry or on any 401.
+4. **API layer:** `api/types.ts` mirrors the backend responses; `api/client.ts` adds the Bearer token, turns errors into `ApiError`, and signs out on 401; `api/sse.ts` is a fetch-based SSE parser plus `streamRun`, which reconnects with `Last-Event-ID`.
+5. **Run view:** `runs/runReducer.ts` (events → rounds, outcome, auditor; deduplicated by event id) and `runs/RunView.tsx`.
+6. **Pages:** `LoginPage`, `NewResearchPage`, `RunPage` (`/runs/:id`), `HistoryPage`.
+7. **End-to-end check:** the owner signs in with a real Google account and runs AAPL with 1 round.
+8. **Docs and git:** README, DESIGN section 12, DECISIONS D48–D52, PROGRESS, DEVLOG. Branch `stage/7-frontend`, tag `stage-7-frontend`.
+
+### What was built
+| File | Purpose |
+|---|---|
+| `frontend/` scaffold | Vite 8, React 19, TypeScript 6, oxlint, Vitest 5; dev server pinned to port 5173 |
+| `frontend/src/api/types.ts`, `client.ts`, `sse.ts`, `useApi.ts` | Typed API client, SSE over fetch with reconnect |
+| `frontend/src/auth/token.ts`, `google.ts`, `context.ts`, `AuthProvider.tsx`, `GoogleSignInButton.tsx` | Google sign-in, token lifecycle |
+| `frontend/src/runs/runReducer.ts`, `RunView.tsx` | Live and replayed run rendering |
+| `frontend/src/pages/*.tsx`, `App.tsx`, `styles.css` | Pages, routing, styling (dark mode, responsive) |
+| `frontend/src/**/*.test.ts(x)`, `src/test/*` | 63 tests: SSE parser and stream, API client, auth, reducer, RunView, pages |
+| `frontend/.env.example` | `VITE_API_URL`, `VITE_GOOGLE_CLIENT_ID` |
+
+**Changes from the plan:**
+- Added an extra fix commit for an oxlint warning (`react/set-state-in-effect`) that was committed by mistake.
+- Added DECISIONS D53 (plain CSS and the router).
+- The New research page defaults to 2 rounds instead of the backend's 3, so runs are faster on the free tier.
+
+### How it was tested
+- `npm test`: **63 passed**. `npm run lint`: clean. `npm run build`: type check passed and the production bundle is about 276 kB (88 kB gzipped).
+- Backend `pytest -q`: unchanged, **259 passed**.
+- **Real end-to-end test (2026-10-10), with the owner signed in with Google at `http://localhost:5173`:**
+  - Two runs were made. AAPL reached consensus in round 1. NVDA hit the round limit with the critic still objecting, so it showed as unresolved disagreement.
+  - Both streamed every step, citation chips opened the 10-K excerpts, and History listed both runs.
+  - The backend log showed only 200/202 responses and 4 Groq rate-limit retries, all of which succeeded. There were no other errors.
+  - The auditor marked both final analyses as not fully grounded, the same pattern as in the Stage 5 evals.
+
+### Next
+Stage 8: deployment and hardening.
+- Hosted Postgres.
+- Backend on Render, Railway or Fly.io, and frontend on Vercel or Netlify, with production origins.
+- Secrets management.
+- Pre-downloading the embedding model.
+- Better rate-limit and timeout handling.
+- A CSP header.
+- An atomic quota check.
+- Alembic migrations.
