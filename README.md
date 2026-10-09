@@ -32,7 +32,7 @@ Details: [docs/DESIGN.md](docs/DESIGN.md) · trade-offs: [docs/DECISIONS.md](doc
 | Area | Tools |
 |---|---|
 | Backend | Python 3.11+, FastAPI, Uvicorn, SQLAlchemy 2 |
-| AI | LangGraph, Groq (Llama models), Pydantic v2 |
+| AI | LangGraph, Groq (`gpt-oss-20b` for tool calling, `gpt-oss-120b` for reasoning), Pydantic v2 |
 | Data | yfinance, SEC filings (PDF), ChromaDB |
 | Auth | Google OAuth 2.0 (ID token verified server-side) |
 | DB | SQLite locally, Postgres when deployed |

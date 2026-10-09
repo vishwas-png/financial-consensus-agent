@@ -24,8 +24,9 @@ FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'app.db'}")
 
 # --- Model names (Groq) ---
-TOOL_CALL_MODEL: str = "llama-3.1-8b-instant"   # cheap + fast, used for tool calling
-REASONING_MODEL: str = "llama-3.3-70b-versatile"  # larger model for analyst/critic/auditor reasoning
+# Groq retired its Llama chat models (see DECISIONS D11/D23); both are open-weight gpt-oss models.
+TOOL_CALL_MODEL: str = "openai/gpt-oss-20b"    # smaller + faster, used for tool calling / extraction
+REASONING_MODEL: str = "openai/gpt-oss-120b"   # larger model for analyst/critic/auditor reasoning
 
 # --- Graph guardrail ---
 # Hard cap on Analyst <-> Critic rounds before the graph is forced to exit.
