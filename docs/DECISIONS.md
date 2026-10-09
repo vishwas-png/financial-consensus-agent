@@ -193,3 +193,33 @@ Each entry: the choice, the alternatives considered, and the trade-off.
   - the `retry-after` cap went from 30s to 60s, because the observed reset was about 48s;
   - the default number of attempts went from 3 to 4.
 - **Trade-off:** a 2-round debate takes about 2 minutes on the free tier, and the agents see a coarser price history.
+
+## Stage 5
+
+### D36. The Auditor does not see the Critic's feedback
+- **Alternatives:** give the auditor the whole debate transcript.
+- **Why:** the auditor's job is grounding, i.e. checking each claim against the evidence. If it reads the critic's objections it tends to repeat them (anchoring), and then it is not an independent check. It gets exactly what the analyst had: the market data, the excerpts, and which ids were cited.
+- **Trade-off:** it can re-discover problems the critic already raised (one extra LLM call's worth of work), and it can't use the debate to understand intent.
+
+### D37. Verdict consistency check (`is_grounded` must match `unsupported_claims`)
+- **Alternatives:** trust the flag; derive `is_grounded` in code from whether the list is empty.
+- **Why:** a contradictory verdict ("grounded" with listed problems, or "ungrounded" with none) is ambiguous for the UI and the evals. The check reuses the `extra_check` hook, so it gets the normal single repair attempt. We keep both fields because the spec defines both, and requiring the model to state them separately makes it commit explicitly.
+- **Trade-off:** occasionally an extra LLM call.
+
+### D38. Frozen evidence fixtures for judge cases
+- **Alternatives:** fetch live data when the evals run.
+- **Why:** a judge label such as "trailing P/E is 38.6, so 45.2 is wrong" is only true for one snapshot. Live data would silently invalidate labels as prices move. `capture_fixture.py` can re-capture the snapshot, and a test pins the numbers the labels depend on, so re-capturing without re-labelling fails loudly.
+- **Trade-off:** the fixture ages; the judge is tested on a 10-K and prices that are not the latest. That's acceptable, because grounding doesn't depend on recency.
+
+### D39. Judge labels that hold by construction (planted flaws)
+- **Alternatives:** label real pipeline outputs by hand; ask a stronger LLM to label.
+- **Why:** each judge case starts from a fully grounded analysis and plants exactly one known flaw (wrong number, unit, period, unsupported citation, outside knowledge). That makes the label unambiguous and lets us check claim-level recall (did the auditor name *that* claim?). Two grounded controls (full and opinion-only) test for false alarms. Labelling real outputs would be more realistic but slow and subjective; LLM labels would be circular.
+- **Trade-off:**
+  - planted flaws are cleaner than real mistakes;
+  - 7 cases is a small sample, so scores move a lot with one case;
+  - the labels were verified by the developer, and the owner should spot-check them (each case's `notes` field explains its label).
+
+### D40. Precision/recall with "ungrounded" as the positive class
+- **Alternatives:** plain accuracy; "grounded" as the positive class.
+- **Why:** the auditor exists to catch problems, so "flagged as ungrounded" is the event we care about. Recall answers "how many real problems does it catch?", and precision answers "how often is a flag a false alarm?". Accuracy hides the trade-off: a judge that always says "grounded" scores 2/7 here while catching nothing.
+- **Trade-off:** with only 2 grounded controls, precision rests on very few false-alarm opportunities.
