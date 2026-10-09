@@ -4,10 +4,18 @@ Semantics under test: max_iterations = maximum Analyst rounds in total.
 """
 
 import pytest
+from langgraph.errors import GraphRecursionError
 
+from src.core.graph import run_research, stream_research
+from src.core.nodes import consensus_check as guardrail_module
+from src.core.nodes.analyst import ANALYST_TOOL_NAME
 from src.core.nodes.consensus_check import consensus_check, route_after_consensus
-from src.core.schemas import CriticFeedback
+from src.core.nodes.critic import CRITIC_TOOL_NAME
+from src.core.schemas import AnalystOutput, CriticFeedback
 from src.core.state import GraphState
+from src.tools.market_data import InvalidTickerError
+from tests.fakes import ToolRoutingClient
+from tests.test_market_data import FakeTicker
 
 AGREE = CriticFeedback(agrees=True, objections=[], missing_context=[])
 DISAGREE = CriticFeedback(agrees=False, objections=["weak"], missing_context=[])
@@ -83,3 +91,112 @@ def test_router_never_continues_past_cap(max_iterations: int) -> None:
     assert rounds == max_iterations
     assert state.iteration_count == max_iterations
     assert state.forced_exit is True
+
+
+# ---------- Whole graph (fake LLM, fake yfinance) ----------
+
+def analysis(round_number: int) -> AnalystOutput:
+    return AnalystOutput(thesis=f"Thesis v{round_number}", supporting_data_points=["x"],
+                         reasoning="r", confidence="medium")
+
+
+def debate_client(critic_agrees_in_round: int | None) -> ToolRoutingClient:
+    """Analyst writes version N in round N; critic agrees only in the given round (None = never)."""
+    return ToolRoutingClient({
+        ANALYST_TOOL_NAME: analysis,
+        CRITIC_TOOL_NAME: lambda n: AGREE if n == critic_agrees_in_round else DISAGREE,
+    })
+
+
+def run(client: ToolRoutingClient, max_iterations: int) -> GraphState:
+    return run_research("AAPL", max_iterations=max_iterations, client=client,
+                        ticker_factory=lambda s: FakeTicker())
+
+
+def test_graph_forced_exit_after_exactly_max_iterations_rounds() -> None:
+    client = debate_client(critic_agrees_in_round=None)
+    final = run(client, max_iterations=3)
+    assert len(client.calls_for(ANALYST_TOOL_NAME)) == 3
+    assert len(client.calls_for(CRITIC_TOOL_NAME)) == 3
+    assert final.iteration_count == 3
+    assert final.forced_exit is True
+    assert final.critic_feedback == DISAGREE
+    assert final.analyst_output is not None and final.analyst_output.thesis == "Thesis v3"
+
+
+def test_graph_stops_early_on_consensus_in_round_two() -> None:
+    client = debate_client(critic_agrees_in_round=2)
+    final = run(client, max_iterations=3)
+    assert len(client.calls_for(ANALYST_TOOL_NAME)) == 2
+    assert final.iteration_count == 2
+    assert final.forced_exit is False
+    assert final.critic_feedback == AGREE
+
+
+def test_graph_single_round_on_immediate_consensus() -> None:
+    client = debate_client(critic_agrees_in_round=1)
+    final = run(client, max_iterations=3)
+    assert len(client.calls) == 2  # one analyst + one critic call
+    assert final.iteration_count == 1
+    assert final.forced_exit is False
+
+
+def test_graph_consensus_in_final_round_is_not_forced() -> None:
+    final = run(debate_client(critic_agrees_in_round=3), max_iterations=3)
+    assert final.iteration_count == 3
+    assert final.forced_exit is False
+
+
+def test_graph_revision_round_sees_previous_critique() -> None:
+    client = debate_client(critic_agrees_in_round=2)
+    run(client, max_iterations=3)
+    first, second = client.calls_for(ANALYST_TOOL_NAME)
+    assert "REVISION" not in first["messages"][1]["content"]
+    assert "REVISION" in second["messages"][1]["content"]
+    assert "Thesis v1" in second["messages"][1]["content"]
+
+
+def test_graph_large_cap_terminates_without_recursion_error() -> None:
+    client = debate_client(critic_agrees_in_round=None)
+    final = run(client, max_iterations=10)
+    assert final.iteration_count == 10
+    assert len(client.calls_for(ANALYST_TOOL_NAME)) == 10
+    assert final.forced_exit is True
+
+
+def test_recursion_limit_backstop_catches_a_broken_guardrail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the router were buggy and always said 'continue', LangGraph must still stop the run."""
+    monkeypatch.setattr(guardrail_module, "route_after_consensus", lambda state: "continue")
+    client = debate_client(critic_agrees_in_round=None)
+    with pytest.raises(GraphRecursionError):
+        run(client, max_iterations=3)
+    # Stopped within one extra round of the intended cap, not after thousands of LLM calls
+    assert len(client.calls_for(ANALYST_TOOL_NAME)) <= 4
+
+
+def test_stream_yields_node_updates_in_order() -> None:
+    updates = list(stream_research("AAPL", max_iterations=2, client=debate_client(None),
+                                   ticker_factory=lambda s: FakeTicker()))
+    assert [name for name, _ in updates] == [
+        "fetch_data", "analyst", "critic", "consensus_check",
+        "analyst", "critic", "consensus_check",
+    ]
+    assert updates[-1][1] == {"iteration_count": 2, "forced_exit": True}
+
+
+def test_invalid_ticker_rejected_before_any_llm_call() -> None:
+    client = debate_client(critic_agrees_in_round=1)
+    with pytest.raises(InvalidTickerError):
+        run_research("RELIANCE.NS", client=client, ticker_factory=lambda s: FakeTicker())
+    assert client.calls == []
+
+
+# ---------- Live (opt-in: pytest -m live) ----------
+
+@pytest.mark.live
+def test_live_single_round_debate() -> None:
+    final = run_research("AAPL", max_iterations=1)
+    assert final.analyst_output is not None
+    assert final.critic_feedback is not None
+    assert final.iteration_count == 1
+    assert final.forced_exit is (not final.critic_feedback.agrees)
