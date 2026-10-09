@@ -1,6 +1,7 @@
 """DB model tests on an in-memory SQLite database, including user-scoped reads."""
 
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import func, select
@@ -13,8 +14,12 @@ from src.db.models import (
     RunStatus,
     RunStep,
     User,
+    count_active_runs,
+    count_runs_since,
+    get_events_for_run,
     get_run_for_user,
     get_runs_for_user,
+    mark_stale_runs_failed,
 )
 from src.db.session import init_db, make_engine
 
@@ -118,3 +123,92 @@ def test_unknown_user_gets_no_runs(db: Session) -> None:
     add_user(db, "alice")
     add_run(db, "alice")
     assert get_runs_for_user(db, "mallory") == []
+
+
+# ---------- Stage 6: event, quota and maintenance helpers ----------
+
+def add_events(db: Session, run: ResearchRun, steps: list[RunStep]) -> list[RunEvent]:
+    events = [RunEvent(run_id=run.id, step=step, content={"n": i}) for i, step in enumerate(steps)]
+    db.add_all(events)
+    db.commit()
+    return events
+
+
+def test_events_for_run_are_ordered_and_resumable(db: Session) -> None:
+    add_user(db, "alice")
+    run = add_run(db, "alice")
+    events = add_events(db, run, [RunStep.FETCH_DATA, RunStep.ANALYST, RunStep.CRITIC, RunStep.CONSENSUS_CHECK])
+    assert [e.step for e in get_events_for_run(db, "alice", run.id)] == [
+        RunStep.FETCH_DATA, RunStep.ANALYST, RunStep.CRITIC, RunStep.CONSENSUS_CHECK]
+    after_second = get_events_for_run(db, "alice", run.id, after_id=events[1].id)
+    assert [e.step for e in after_second] == [RunStep.CRITIC, RunStep.CONSENSUS_CHECK]
+
+
+def test_user_cannot_read_another_users_events(db: Session) -> None:
+    add_user(db, "alice")
+    add_user(db, "bob")
+    bob_run = add_run(db, "bob")
+    add_events(db, bob_run, [RunStep.ANALYST])
+    assert get_events_for_run(db, "alice", bob_run.id) == []
+    assert len(get_events_for_run(db, "bob", bob_run.id)) == 1
+
+
+def test_new_step_types_round_trip(db: Session) -> None:
+    add_user(db, "alice")
+    run = add_run(db, "alice")
+    add_events(db, run, [RunStep.FETCH_DATA, RunStep.CONSENSUS_CHECK, RunStep.ERROR])
+    db.expire_all()
+    assert {e.step for e in get_events_for_run(db, "alice", run.id)} == {
+        RunStep.FETCH_DATA, RunStep.CONSENSUS_CHECK, RunStep.ERROR}
+
+
+def test_count_runs_since_uses_time_window_and_owner(db: Session) -> None:
+    add_user(db, "alice")
+    add_user(db, "bob")
+    now = datetime.now(timezone.utc)
+    old = add_run(db, "alice")
+    old.created_at = now - timedelta(hours=30)
+    add_run(db, "alice")
+    add_run(db, "alice")
+    add_run(db, "bob")
+    db.commit()
+    # SQLite stores datetimes without a timezone; the comparison must still work
+    assert count_runs_since(db, "alice", now - timedelta(hours=24)) == 2
+    assert count_runs_since(db, "alice", now - timedelta(hours=48)) == 3
+    assert count_runs_since(db, "bob", now - timedelta(hours=24)) == 1
+
+
+def test_count_active_runs(db: Session) -> None:
+    add_user(db, "alice")
+    pending, running, done, failed = (add_run(db, "alice") for _ in range(4))
+    running.status = RunStatus.RUNNING
+    done.status = RunStatus.DONE
+    failed.status = RunStatus.FAILED
+    db.commit()
+    assert count_active_runs(db, "alice") == 2
+    assert count_active_runs(db, "nobody") == 0
+
+
+def test_mark_stale_runs_failed(db: Session) -> None:
+    add_user(db, "alice")
+    pending, running, done = (add_run(db, "alice") for _ in range(3))
+    running.status = RunStatus.RUNNING
+    done.status = RunStatus.DONE
+    db.commit()
+
+    assert mark_stale_runs_failed(db) == 2
+    db.expire_all()
+    assert db.get(ResearchRun, pending.id).status == RunStatus.FAILED  # type: ignore[union-attr]
+    assert db.get(ResearchRun, running.id).status == RunStatus.FAILED  # type: ignore[union-attr]
+    assert db.get(ResearchRun, done.id).status == RunStatus.DONE  # type: ignore[union-attr]
+    error_events = get_events_for_run(db, "alice", running.id)
+    assert [e.step for e in error_events] == [RunStep.ERROR]
+    assert "restarted" in error_events[0].content["message"]
+    assert mark_stale_runs_failed(db) == 0  # idempotent
+
+
+def test_history_limit(db: Session) -> None:
+    add_user(db, "alice")
+    for _ in range(5):
+        add_run(db, "alice")
+    assert len(get_runs_for_user(db, "alice", limit=3)) == 3

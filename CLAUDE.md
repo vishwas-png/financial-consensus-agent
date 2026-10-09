@@ -91,7 +91,7 @@ financial-consensus-agent/
 **DB tables:**
 - `users`: id (Google sub, PK), email, created_at
 - `research_runs`: id, user_id (FK), ticker, status (pending/running/done/failed), created_at, final_output (JSON)
-- `run_events`: id, run_id (FK), step (analyst/critic/auditor), content (JSON), timestamp
+- `run_events`: id, run_id (FK), step (fetch_data/analyst/critic/consensus_check/auditor/error), content (JSON), timestamp
 - Every query is scoped by user_id; no cross-user reads.
 
 ## Stage plan (do not skip ahead; each stage must run cleanly and pass its tests before the next)
