@@ -9,7 +9,7 @@ Multi-user, deployed web app. A user signs in with Google, submits a stock ticke
 
 ## Tech stack
 - Backend: Python 3.11+, FastAPI, Uvicorn, SQLAlchemy
-- AI: LangGraph, Groq SDK (Llama-3.1-8B for tool calling, a larger Llama-3.1 model for reasoning if needed), Pydantic v2
+- AI: LangGraph, Groq SDK (`openai/gpt-oss-20b` for tool calling, `openai/gpt-oss-120b` for reasoning; Groq retired its Llama chat models, see DECISIONS D23), Pydantic v2
 - Data: yfinance, SEC filings (PDF parsing), ChromaDB (vector store)
 - Auth: Google OAuth 2.0 (Google Identity Services on the frontend, ID token verified in FastAPI with `google-auth`)
 - DB: SQLite locally, Postgres (Supabase/Neon free tier) when deployed

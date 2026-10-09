@@ -54,7 +54,7 @@ Each entry: the choice, the alternatives considered, and the trade-off.
 - **Why:** each stage's `requirements.txt` reflects what is actually used, and installs stay fast.
 - **Trade-off:** `requirements.txt` changes in most stages.
 
-### D11. Reasoning model: `llama-3.3-70b-versatile`
+### D11. Reasoning model: `llama-3.3-70b-versatile` (superseded by D23)
 - **Alternatives:** a larger Llama-3.1 model as CLAUDE.md originally suggested.
 - **Why:** Groq retired the Llama-3.1-70B model; 3.3-70B is its replacement in the same family. The tool-calling model stays `llama-3.1-8b-instant`. Model names live in `config.py` so they are easy to change. Will be re-checked against Groq's model list in Stage 2.
 - **Trade-off:** none significant; may change again as Groq updates models.
@@ -90,3 +90,35 @@ Each entry: the choice, the alternatives considered, and the trade-off.
 - **Alternatives:** convert everything to fractions.
 - **Why:** yfinance 1.x returns `dividendYield` in percent (0.32 = 0.32%) but `revenueGrowth`/`profitMargins` as fractions (0.164 = 16.4%). Renaming the field to `dividend_yield_pct` makes the unit visible to the LLM without silently transforming data. Units are documented next to `INFO_FIELDS`.
 - **Trade-off:** mixed units remain; prompts in Stage 3 must mention them.
+
+## Stage 2
+
+### D18. Our own retry loop; SDK retries disabled
+- **Alternatives:** the Groq SDK's built-in retries (`max_retries=2` by default); a library such as `tenacity`.
+- **Why:** one explicit loop in `groq_client.py` that can be read in a minute and is unit tested: what is retried (429, 5xx, connection/timeout), the backoff (1s, 2s, ...), `retry-after` support (capped at 30s), and what is never retried (400/401/404). Leaving SDK retries on too would multiply attempts (3 x 3).
+- **Trade-off:** we maintain ~30 lines the SDK already has.
+
+### D19. Forced tool call (`tool_choice`) for structured output, not JSON mode
+- **Alternatives:** `response_format={"type": "json_object"}`; prompt-only "reply in JSON"; Groq's strict JSON-schema mode.
+- **Why:** forcing a specific function makes the model's answer arrive as tool arguments with our JSON Schema attached, and Groq returns a clear `tool_use_failed` error when the model can't comply. The same mechanism works for both tool calling (ticker) and agent outputs (Stage 3).
+- **Trade-off:** we still validate with Pydantic ourselves; the API does not guarantee schema-valid arguments.
+
+### D20. Exactly one repair attempt
+- **Alternatives:** fail immediately; retry N times; retry silently without feedback.
+- **Why:** showing the model its own output plus the exact validation error fixes most mistakes on the next call (e.g. `BRK.B` -> `BRK-B`). More attempts add cost and latency and, for impossible requests (non-US company), only push the model to invent something.
+- **Trade-off:** a mistake the model repeats twice fails the run; the caller gets `ToolCallError` with the reason and raw output.
+
+### D21. One generic `call_with_schema` helper
+- **Alternatives:** separate parsing code per agent.
+- **Why:** ticker extraction, Analyst, Critic and Auditor all need "call the LLM, get a validated Pydantic object or a clear error". One tested helper means one place for the repair logic.
+- **Trade-off:** the helper must stay generic (no finance logic).
+
+### D22. Temperature 0 for extraction
+- **Alternatives:** default temperature.
+- **Why:** extraction should be deterministic and repeatable for tests and evals; there is no creativity to gain.
+- **Trade-off:** none for extraction. Agents in Stage 3 may use a slightly higher temperature if debates become repetitive.
+
+### D23. Models: `openai/gpt-oss-20b` (tool calling) and `openai/gpt-oss-120b` (reasoning)
+- **Alternatives:** `qwen/qwen3.8-27b` for both; keep Llama by moving to another provider (Together, Fireworks).
+- **Why:** in Stage 2 both Llama ids returned 404 and Groq's `models.list()` had no Llama chat models left. gpt-oss models are open-weight, support tool calling on Groq, and keep the small/large split from the original design. Chosen by the owner.
+- **Trade-off:** gpt-oss are reasoning models: they spend tokens thinking before answering, so small `max_completion_tokens` limits produce empty replies. Supersedes D11.
