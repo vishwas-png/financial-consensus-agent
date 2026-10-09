@@ -95,6 +95,11 @@ def test_router_never_continues_past_cap(max_iterations: int) -> None:
 
 # ---------- Whole graph (fake LLM, fake yfinance) ----------
 
+def no_filings(ticker: str) -> list[str]:
+    """Filing retriever stub: these tests are about the loop, not RAG."""
+    return []
+
+
 def analysis(round_number: int) -> AnalystOutput:
     return AnalystOutput(thesis=f"Thesis v{round_number}", supporting_data_points=["x"],
                          reasoning="r", confidence="medium")
@@ -110,7 +115,7 @@ def debate_client(critic_agrees_in_round: int | None) -> ToolRoutingClient:
 
 def run(client: ToolRoutingClient, max_iterations: int) -> GraphState:
     return run_research("AAPL", max_iterations=max_iterations, client=client,
-                        ticker_factory=lambda s: FakeTicker())
+                        ticker_factory=lambda s: FakeTicker(), filing_retriever=no_filings)
 
 
 def test_graph_forced_exit_after_exactly_max_iterations_rounds() -> None:
@@ -176,7 +181,7 @@ def test_recursion_limit_backstop_catches_a_broken_guardrail(monkeypatch: pytest
 
 def test_stream_yields_node_updates_in_order() -> None:
     updates = list(stream_research("AAPL", max_iterations=2, client=debate_client(None),
-                                   ticker_factory=lambda s: FakeTicker()))
+                                   ticker_factory=lambda s: FakeTicker(), filing_retriever=no_filings))
     assert [name for name, _ in updates] == [
         "fetch_data", "analyst", "critic", "consensus_check",
         "analyst", "critic", "consensus_check",
@@ -187,7 +192,7 @@ def test_stream_yields_node_updates_in_order() -> None:
 def test_invalid_ticker_rejected_before_any_llm_call() -> None:
     client = debate_client(critic_agrees_in_round=1)
     with pytest.raises(InvalidTickerError):
-        run_research("RELIANCE.NS", client=client, ticker_factory=lambda s: FakeTicker())
+        run_research("RELIANCE.NS", client=client, ticker_factory=lambda s: FakeTicker(), filing_retriever=no_filings)
     assert client.calls == []
 
 
