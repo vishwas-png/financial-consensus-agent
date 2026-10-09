@@ -15,10 +15,24 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 # Load backend/.env if it exists. Real environment variables take precedence.
 load_dotenv(BACKEND_DIR / ".env")
 
+# --- Environment ---
+# "production" makes the app refuse to start if a required setting is missing (see main.py).
+APP_ENV: str = os.getenv("APP_ENV", "development")
+IS_PRODUCTION: bool = APP_ENV == "production"
+
 # --- Secrets / deployment settings ---
 GROQ_API_KEY: str | None = os.getenv("GROQ_API_KEY")
 GOOGLE_CLIENT_ID: str | None = os.getenv("GOOGLE_CLIENT_ID")
-FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+
+
+def parse_origins(value: str) -> list[str]:
+    """'https://a.app, http://localhost:5173/' -> ['https://a.app', 'http://localhost:5173']"""
+    return [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+
+
+# Browser origins allowed to call the API (comma-separated, e.g. the Vercel URL + localhost)
+FRONTEND_ORIGINS: list[str] = parse_origins(os.getenv("FRONTEND_ORIGIN", "http://localhost:5173"))
+FRONTEND_ORIGIN: str = FRONTEND_ORIGINS[0] if FRONTEND_ORIGINS else "http://localhost:5173"
 
 def normalize_database_url(url: str) -> str:
     """Make hosted Postgres URLs use the psycopg (v3) driver.
@@ -54,5 +68,22 @@ MAX_ITERATIONS: int = 3
 # --- API quotas (Stage 6), checked BEFORE any graph work ---
 RUNS_PER_DAY: int = 5                # research runs per user per rolling 24 hours
 MAX_ACTIVE_RUNS_PER_USER: int = 1    # pending/running runs a user may have at once
-MAX_CONCURRENT_RUNS: int = 2         # runs executing at once across ALL users (Groq free tier)
+# Runs executing at once across ALL users (Groq free tier + host memory). Set to 1 on small hosts.
+MAX_CONCURRENT_RUNS: int = int(os.getenv("MAX_CONCURRENT_RUNS", "2"))
 MAX_USER_ITERATIONS: int = 3         # highest max_iterations a user may request
+
+# --- Production checks ---
+REQUIRED_IN_PRODUCTION = ("GROQ_API_KEY", "GOOGLE_CLIENT_ID", "DATABASE_URL", "FRONTEND_ORIGIN", "SEC_USER_AGENT")
+
+
+def production_config_problems(env: dict[str, str] | None = None) -> list[str]:
+    """Names of missing/invalid settings for production. Never includes secret values."""
+    env = dict(os.environ) if env is None else env
+    problems = [f"{name} is not set" for name in REQUIRED_IN_PRODUCTION if not env.get(name, "").strip()]
+    database_url = env.get("DATABASE_URL", "")
+    if database_url.startswith("sqlite"):
+        problems.append("DATABASE_URL must point to Postgres in production (SQLite files are lost on redeploy)")
+    if any(origin.startswith("http://") and "localhost" not in origin
+           for origin in parse_origins(env.get("FRONTEND_ORIGIN", ""))):
+        problems.append("FRONTEND_ORIGIN must use https:// (except localhost)")
+    return problems

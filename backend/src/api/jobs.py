@@ -12,6 +12,7 @@ core/ never sees user_id: the worker passes only the ticker and settings.
 """
 
 import logging
+import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from typing import Any
@@ -121,13 +122,17 @@ class RunWorker:
                 return
             run.status = RunStatus.RUNNING
             db.commit()
+            started = time.monotonic()
+            logger.info("Run %s started: %s, max_iterations=%d", run_id, ticker, max_iterations)
             try:
                 state = self._stream_and_save(db, run_id, ticker, max_iterations)
                 run.final_output = final_output(state)
                 run.status = RunStatus.DONE
                 db.commit()
+                logger.info("Run %s done in %.0fs: rounds=%d forced_exit=%s", run_id,
+                            time.monotonic() - started, state.iteration_count, state.forced_exit)
             except Exception as error:  # the job must always end in a recorded state
-                logger.exception("Run %s (%s) failed", run_id, ticker)
+                logger.exception("Run %s (%s) failed after %.0fs", run_id, ticker, time.monotonic() - started)
                 db.rollback()
                 db.add(RunEvent(run_id=run_id, step=RunStep.ERROR,
                                 content={"message": user_message(error, ticker), "type": type(error).__name__}))
