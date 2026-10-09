@@ -76,15 +76,16 @@ financial-consensus-agent/
 **Separation of concerns:** `core/` takes a ticker and returns a final GraphState. It never sees `user_id`. `api/` handles auth, quota, persistence, and streaming around it. Per-user config (for example model tier) is passed into GraphState as a parameter by the API layer.
 
 **Graph:** `fetch_data -> analyst -> critic -> consensus_check`
-- `consensus_check` returns `"done"` if `critic_feedback.agrees` is true, or if `iteration_count >= max_iterations` (forced exit; still goes to the Auditor and is flagged as unresolved disagreement).
-- Otherwise it increments `iteration_count` and returns `"continue"`, looping back to `analyst`.
+- `max_iterations` is the maximum number of Analyst rounds IN TOTAL (default 3 = at most 3 analyst + 3 critic runs). `iteration_count` = completed rounds.
+- After each critic step, `consensus_check` increments `iteration_count`, then returns `"done"` if `critic_feedback.agrees` is true, or if `iteration_count >= max_iterations` (forced exit: `forced_exit=True`; still goes to the Auditor and is flagged as unresolved disagreement).
+- Otherwise it returns `"continue"`, looping back to `analyst`. (Implemented as a node that updates state + a pure router; see DECISIONS D24/D27.)
 - `done -> auditor -> END`
 
 **Schemas (Pydantic v2):**
 - `AnalystOutput`: thesis (str), supporting_data_points (list[str]), reasoning (str), confidence (Literal low/medium/high), filing_citations (list[str], default [])
 - `CriticFeedback`: agrees (bool), objections (list[str]), missing_context (list[str])
 - `AuditorVerdict`: is_grounded (bool), unsupported_claims (list[str]), notes (str)
-- `GraphState`: ticker, raw_data (dict), filing_chunks (list[str]), analyst_output | None, critic_feedback | None, iteration_count (int, default 0), max_iterations (int, default 3), auditor_verdict | None
+- `GraphState`: ticker, raw_data (dict), filing_chunks (list[str]), analyst_output | None, critic_feedback | None, iteration_count (int, default 0), max_iterations (int, default 3), auditor_verdict | None, forced_exit (bool, default False)
 - Tool-call input schema for market data: ticker validated as uppercase, non-empty, no exchange suffix
 
 **DB tables:**

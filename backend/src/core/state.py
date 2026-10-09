@@ -27,6 +27,10 @@ class GraphState(BaseModel):
     critic_feedback: CriticFeedback | None = None
     auditor_verdict: AuditorVerdict | None = None
 
-    # Guardrail: how many Analyst/Critic rounds have run, and the hard cap
+    # Guardrail: completed Analyst/Critic rounds, and the max number of rounds in total
     iteration_count: int = Field(default=0, ge=0)
     max_iterations: int = Field(default=MAX_ITERATIONS, ge=1)
+
+    # True when the loop stopped because it hit max_iterations while the Critic still
+    # disagreed. The result must then be shown as "unresolved disagreement", not consensus.
+    forced_exit: bool = False

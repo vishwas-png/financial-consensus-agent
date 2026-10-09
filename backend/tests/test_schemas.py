@@ -110,6 +110,7 @@ def test_graph_state_defaults() -> None:
     assert state.analyst_output is None
     assert state.critic_feedback is None
     assert state.auditor_verdict is None
+    assert state.forced_exit is False
 
 
 def test_graph_state_rejects_zero_max_iterations() -> None:
