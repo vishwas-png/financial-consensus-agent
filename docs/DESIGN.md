@@ -115,7 +115,35 @@ erDiagram
 - Every query is scoped by `user_id`; there are no cross-user reads. Scoped helpers live in `db/models.py` and are tested.
 - Run ids are random UUIDs so they cannot be guessed from the SSE URL (ownership is still checked).
 
-## 7. Structured output contracts (Pydantic v2)
+## 7. RAG over SEC filings (Stage 4)
+
+```mermaid
+flowchart LR
+    subgraph Ingest["Ingest (once per filing, lazy)"]
+        E[EDGAR latest 10-K<br/>HTML] --> X[extract text<br/>strip XBRL, footers]
+        P[manual 10-K PDF] --> X
+        X --> S[split into Items<br/>last heading wins]
+        S --> C[semantic chunking<br/>topic shift or 1200-char cap]
+        C --> V[(ChromaDB<br/>ids + metadata + embeddings)]
+    end
+    subgraph Retrieve["Retrieve (every run)"]
+        Q[6 topic queries] --> F{pre-filter<br/>ticker + accession + section}
+        F --> V
+        V --> K[coverage-first top 8]
+    end
+    K --> FD[fetch_data -> filing_chunks]
+    FD --> A[analyst cites chunk ids]
+    FD --> CR[critic checks citations]
+```
+
+- **Sources:** the latest 10-K from SEC EDGAR (HTML/inline XBRL) is downloaded automatically. A 10-K PDF can also be indexed by hand (`python -m src.rag.ingest`). Both go through the same chunker.
+- **Sections:** each 10-K Item heading appears twice (table of contents, then the real section); the last occurrence marks the section start. Only Items 1, 1A, 1C, 3, 7 and 7A are indexed.
+- **Semantic chunking:** paragraphs within a section are embedded. A chunk ends where neighbouring-paragraph similarity is in the section's lowest 20% (and below its median), or at 1,200 characters. Size-based breaks repeat one paragraph as overlap; tiny chunks are merged into a neighbour.
+- **Metadata pre-filtering:** every vector query filters on `ticker`, `accession` (one filing) and `section` before ranking, so another company's or another year's text can never be returned.
+- **Citations:** chunk ids such as `AAPL-10K-2025-1A-007` are deterministic. The Analyst must cite only ids it was given; this is enforced in code (`extra_check` → one repair attempt). The Critic sees the same excerpts. Stage 5's Auditor will check that citations actually support the claims.
+- **Failure mode:** a missing filing (ETF, foreign issuer, EDGAR down) logs a warning and the debate runs on market data only.
+
+## 8. Structured output contracts (Pydantic v2)
 
 - `AnalystOutput`: thesis, supporting_data_points, reasoning, confidence (`low|medium|high`), filing_citations (default `[]`)
 - `CriticFeedback`: agrees, objections, missing_context
@@ -123,6 +151,6 @@ erDiagram
 - `MarketDataToolInput`: ticker, normalized to uppercase, non-empty, no exchange suffix
 - LLM-output models forbid extra fields so malformed or hallucinated output fails validation loudly instead of passing silently.
 
-## 8. Streaming
+## 9. Streaming
 
 `POST /research` creates a run (after the quota check) and returns its id. `GET /research/{id}/stream` opens an SSE stream; each graph step is saved as a `run_event` and pushed as an SSE message. `GET /history` lists the user's past runs.

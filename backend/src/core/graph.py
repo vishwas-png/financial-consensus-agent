@@ -7,6 +7,8 @@
                                                       v
                                                      END   (Stage 5 inserts the auditor here)
 
+fetch_data loads market data (yfinance) and SEC filing excerpts (RAG over the latest 10-K).
+
 `core/` knows nothing about users: it takes a ticker and settings, returns a GraphState.
 
 Usage (manual check):  python -m src.core.graph AAPL [max_iterations]
@@ -26,7 +28,7 @@ from src.config import MAX_ITERATIONS
 from src.core.nodes import consensus_check as guardrail
 from src.core.nodes.analyst import make_analyst_node
 from src.core.nodes.critic import make_critic_node
-from src.core.nodes.fetch_data import make_fetch_data_node
+from src.core.nodes.fetch_data import FilingRetriever, default_filing_retriever, make_fetch_data_node
 from src.core.schemas import MarketDataToolInput
 from src.core.state import GraphState
 from src.tools.market_data import InvalidTickerError
@@ -35,10 +37,14 @@ from src.tools.market_data import InvalidTickerError
 STEPS_PER_ROUND = 3
 
 
-def build_graph(client: GroqClient, ticker_factory: Callable[[str], Any] = yf.Ticker) -> Any:
+def build_graph(
+    client: GroqClient,
+    ticker_factory: Callable[[str], Any] = yf.Ticker,
+    filing_retriever: FilingRetriever = default_filing_retriever,
+) -> Any:
     """Wire the nodes together and compile the graph."""
     graph = StateGraph(GraphState)
-    graph.add_node("fetch_data", make_fetch_data_node(ticker_factory))
+    graph.add_node("fetch_data", make_fetch_data_node(ticker_factory, filing_retriever))
     graph.add_node("analyst", make_analyst_node(client))
     graph.add_node("critic", make_critic_node(client))
     graph.add_node("consensus_check", guardrail.consensus_check)
@@ -79,9 +85,10 @@ def run_research(
     max_iterations: int = MAX_ITERATIONS,
     client: GroqClient | None = None,
     ticker_factory: Callable[[str], Any] = yf.Ticker,
+    filing_retriever: FilingRetriever = default_filing_retriever,
 ) -> GraphState:
     """Run the whole debate for one ticker and return the final state."""
-    app = build_graph(client or GroqClient(), ticker_factory)
+    app = build_graph(client or GroqClient(), ticker_factory, filing_retriever)
     result = app.invoke(
         _initial_state(ticker, max_iterations),
         config={"recursion_limit": recursion_limit_for(max_iterations)},
@@ -94,9 +101,10 @@ def stream_research(
     max_iterations: int = MAX_ITERATIONS,
     client: GroqClient | None = None,
     ticker_factory: Callable[[str], Any] = yf.Ticker,
+    filing_retriever: FilingRetriever = default_filing_retriever,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Run the debate and yield (node_name, state_update) after each step (for live streaming)."""
-    app = build_graph(client or GroqClient(), ticker_factory)
+    app = build_graph(client or GroqClient(), ticker_factory, filing_retriever)
     for chunk in app.stream(
         _initial_state(ticker, max_iterations),
         config={"recursion_limit": recursion_limit_for(max_iterations)},
@@ -118,10 +126,12 @@ if __name__ == "__main__":
     for node, update in stream_research(sys.argv[1], max_iterations=max_iter):
         if node == "fetch_data":
             data = update["raw_data"]
-            print(f"[fetch_data] {data['profile']['name']} @ {data['price']['current']}")
+            print(f"[fetch_data] {data['profile']['name']} @ {data['price']['current']}; "
+                  f"{len(update['filing_chunks'])} filing excerpts")
         elif node == "analyst":
             out = update["analyst_output"]
             print(f"\n=== Round {rounds + 1} ===\n[analyst] ({out.confidence}) {out.thesis}")
+            print(f"   citations: {out.filing_citations}")
         elif node == "critic":
             feedback = update["critic_feedback"]
             print(f"[critic] agrees={feedback.agrees}")

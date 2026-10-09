@@ -149,3 +149,47 @@ Each entry: the choice, the alternatives considered, and the trade-off.
 - **Alternatives:** a hand-written text summary of the data; only selected fields.
 - **Why:** the JSON is already curated (D12) and small (a few thousand tokens). Giving both agents the identical JSON means the critic can check every number the analyst cites. The units note (D17) lives in one constant shared by both prompts.
 - **Trade-off:** ~52 weekly price points use tokens on every call; can be down-sampled if cost matters (Stage 8).
+
+## Stage 4
+
+### D29. Filings from SEC EDGAR (HTML) plus optional PDFs (owner's choice)
+- **Alternatives:** PDF only (the original spec); EDGAR only.
+- **Why:** EDGAR publishes 10-Ks as HTML/inline XBRL, not PDF, so PDF-only would need a manual download for every ticker. EDGAR provides every US filer's latest 10-K automatically. PDF ingestion (`pypdf`) is kept for filings obtained elsewhere, and both paths feed the same chunker.
+- **Trade-off:** two extraction paths to maintain. EDGAR also requires a `SEC_USER_AGENT` with a contact email and allows at most 10 requests per second.
+
+### D30. Section-aware semantic chunking
+- **Alternatives:** fixed-size chunks with overlap; one chunk per paragraph; LLM-based chunking.
+- **Why:** 10-K Items are natural boundaries, and the section becomes metadata for filtering (D32). Inside a section, a break goes where the topic changes: the similarity between neighbouring paragraph embeddings is in the section's lowest 20% and below its median. Chunks are also capped at 1,200 characters. This keeps one risk factor or one MD&A topic together. A size break repeats one paragraph as overlap, a topic break starts clean, and tiny chunks are merged into a neighbour.
+- **Trade-off:** more code than fixed-size splitting. The section regex depends on 10-K heading conventions; two quirks are handled: headings repeated in the table of contents, and a period on the next line.
+
+### D31. Local embedding model (all-MiniLM-L6-v2 via ChromaDB's ONNX runtime)
+- **Alternatives:** a hosted embedding API (OpenAI, Cohere, Voyage); a larger local model.
+- **Why:** it is free, needs no extra API key, runs on CPU, and is good enough for retrieving passages from a single document. We compute the embeddings ourselves (the `Embedder` protocol) and pass them to Chroma. That way the chunker and the store always use the same model, and tests can use a fake embedder.
+- **Trade-off:** a one-time ~80 MB download (slow on the first run) and weaker retrieval than larger models. Deployment should download the model in advance (Stage 8).
+
+### D32. Metadata pre-filtering on ticker + accession + section
+- **Alternatives:** semantic search over everything, then filter the results; one collection per ticker.
+- **Why:** filtering before ranking guarantees that results come from the right filing of the right company, in the right section, and no top-k slots are wasted on chunks that would be thrown away. Each topic query targets one section (risks → 1A, liquidity → 7, and so on).
+- **Ranking:** results are coverage-first. Each topic's best hit is taken first, then the remaining slots go to the closest leftover hits, because distances from different queries cannot be compared.
+- **Trade-off:** the fixed topic queries are generic, so questions about unusual topics may miss relevant passages.
+
+### D33. Deterministic chunk ids, enforced citations
+- **Alternatives:** random ids; citing by quoting text; trusting the model's citations.
+- **Why:** ids like `AAPL-10K-2025-1A-007` are readable and easy for the model to copy. They stay the same when a filing is re-ingested, so upserts never create duplicates.
+- **Enforcement:** an `extra_check` on `call_with_schema` rejects any citation that is not one of the provided ids and triggers the usual single repair attempt. Invented citations therefore never reach the critic or the auditor.
+- **Trade-off:** the check confirms that an id exists, not that the excerpt supports the claim. That is the Critic's job, and the Stage 5 Auditor's.
+
+### D34. Lazy ingestion on first request
+- **Alternatives:** pre-ingest a fixed list of tickers; ingest in a background job.
+- **Why:** any ticker works without setup.
+  - The first run for a ticker downloads and indexes its 10-K (a few seconds once the embedding model is cached), and later runs reuse the index.
+  - Filings are optional: if none is found, the debate continues on market data only and a warning is logged.
+- **Trade-off:** the first run for each ticker is slower, and an indexed filing is not refreshed when a newer 10-K is filed (Stage 8: compare against EDGAR's latest accession).
+
+### D35. Fit within Groq's free-tier tokens-per-minute limit
+- **Alternatives:** fewer excerpts; a paid tier; the smaller model for the agents.
+- **Why:** measured live, one agent call used about 4,200 prompt tokens and 1,300 completion tokens. The limit for `gpt-oss-120b` is 8,000 tokens per minute, and the first RAG debate failed after 3 attempts. Three fixes:
+  - market data is sent as compact JSON with a roughly monthly price history, saving about 800 tokens (the full data stays in state);
+  - the `retry-after` cap went from 30s to 60s, because the observed reset was about 48s;
+  - the default number of attempts went from 3 to 4.
+- **Trade-off:** a 2-round debate takes about 2 minutes on the free tier, and the agents see a coarser price history.

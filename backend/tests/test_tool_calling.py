@@ -113,6 +113,39 @@ def test_caller_messages_not_mutated() -> None:
     assert messages == [{"role": "user", "content": "Apple"}]
 
 
+# ---------- extra_check hook ----------
+
+def reject_msft(result: MarketDataToolInput) -> None:
+    if result.ticker == "MSFT":
+        raise ValueError("MSFT is not the company the user asked about")
+
+
+def test_extra_check_failure_triggers_repair_with_message() -> None:
+    client = ScriptedClient([tool_call_message('{"ticker": "MSFT"}'), tool_call_message('{"ticker": "AAPL"}')])
+    result = call_with_schema(client, [{"role": "user", "content": "Apple"}], MarketDataToolInput,
+                              MARKET_DATA_TOOL_NAME, "d", "m", extra_check=reject_msft)
+    assert result.ticker == "AAPL"
+    assert len(client.calls) == 2
+    repair = client.calls[1]["messages"][-1]["content"]
+    assert "content check" in repair and "MSFT is not the company" in repair
+
+
+def test_extra_check_failing_twice_raises() -> None:
+    client = ScriptedClient([tool_call_message('{"ticker": "MSFT"}')] * 2)
+    with pytest.raises(ToolCallError) as excinfo:
+        call_with_schema(client, [{"role": "user", "content": "Apple"}], MarketDataToolInput,
+                         MARKET_DATA_TOOL_NAME, "d", "m", extra_check=reject_msft)
+    assert "MSFT is not the company" in excinfo.value.reason
+    assert excinfo.value.raw_output == '{"ticker":"MSFT"}'
+
+
+def test_extra_check_passing_needs_one_call() -> None:
+    client = ScriptedClient([tool_call_message('{"ticker": "AAPL"}')])
+    call_with_schema(client, [{"role": "user", "content": "Apple"}], MarketDataToolInput,
+                     MARKET_DATA_TOOL_NAME, "d", "m", extra_check=reject_msft)
+    assert len(client.calls) == 1
+
+
 # ---------- Repair fails ----------
 
 def test_two_bad_answers_raise_tool_call_error() -> None:

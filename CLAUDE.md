@@ -162,8 +162,8 @@ __pycache__/
 *.sqlite3
 chroma_db/
 .chroma/
-data/raw/
-data/filings/
+**/data/raw/
+**/data/filings/
 *.pdf
 
 # Node / frontend
