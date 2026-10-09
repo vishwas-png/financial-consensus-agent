@@ -223,3 +223,65 @@ Each entry: the choice, the alternatives considered, and the trade-off.
 - **Alternatives:** plain accuracy; "grounded" as the positive class.
 - **Why:** the auditor exists to catch problems, so "flagged as ungrounded" is the event we care about. Recall answers "how many real problems does it catch?", and precision answers "how often is a flag a false alarm?". Accuracy hides the trade-off: a judge that always says "grounded" scores 2/7 here while catching nothing.
 - **Trade-off:** with only 2 grounded controls, precision rests on very few false-alarm opportunities.
+
+## Stage 6
+
+### D41. The graph runs in a background worker; the stream replays persisted events
+- **Alternatives:**
+  - run the graph inside the SSE request;
+  - a separate task queue (Celery/RQ with Redis).
+- **Why:**
+  - A debate takes 1–4 minutes. Inside the request, a closed tab or a dropped connection would kill the run and waste its tokens, and nothing could resume it.
+  - With a worker that commits each step to `run_events`, the stream is just a reader. Reconnects resume via `Last-Event-ID`, history needs no extra code, and the same events feed the UI and the DB.
+  - An in-process `ThreadPoolExecutor` needs no extra infrastructure on a free hosting tier.
+- **Trade-off:**
+  - Runs in progress are lost on restart. They are marked failed at startup, not resumed.
+  - This only works on a single API instance. Scaling out needs a real queue (Stage 8/9).
+  - There is a global limit of 2 concurrent runs.
+
+### D42. SSE authenticated with the Authorization header (frontend uses fetch, not EventSource)
+- **Alternatives:**
+  - the token in a query string (`?token=`), which `EventSource` supports;
+  - a session cookie.
+- **Why:**
+  - Tokens in URLs end up in server and proxy logs and in browser history.
+  - Cookies would bring CSRF handling and server sessions back, and D5 chose stateless Bearer tokens.
+  - `fetch()` with a streaming body reader can send headers and parse SSE in a few lines (Stage 7).
+- **Trade-off:** the frontend can't use the built-in `EventSource`, with its automatic reconnect. We implement reconnect ourselves with `Last-Event-ID`.
+
+### D43. Quota counted from `research_runs`; checked before any LLM call
+- **Alternatives:** a separate quota/usage table; Redis counters; token-based budgets.
+- **Why:**
+  - Runs are the expensive unit, and the table already has `user_id`, `status` and `created_at`, so no extra state is needed.
+  - Limits: 1 active run and 5 runs per rolling 24 hours.
+  - The check runs before ticker extraction, and a failed extraction creates no run, so a typo costs nothing.
+  - Failed runs still count, because they used LLM calls.
+- **Trade-off:**
+  - The check and the insert are not atomic, so two simultaneous requests from the same user could both pass the active-run check. That's acceptable at this scale; a row lock or unique partial index would fix it on Postgres (Stage 8).
+  - Limits are per run, not per token.
+
+### D44. Another user's run id returns 404, not 403
+- **Alternatives:** 403 Forbidden.
+- **Why:** 403 confirms that the id exists. With 404 the API reveals nothing about other users' runs. The UUID ids (D5) already make guessing impractical; this is defence in depth.
+- **Trade-off:** slightly harder debugging ("does it exist?") during development.
+
+### D45. `create_app()` takes its collaborators as parameters
+- **Alternatives:** a module-level app with `app.dependency_overrides` / monkeypatching in tests.
+- **Why:** the session factory, token verifier, run worker, ticker extractor and stream timings are passed in and stored on `app.state`. Tests build an app with an in-memory DB, a fake verifier, a fake graph and an inline executor, with no global patching. Production uses `app = create_app()` with the real ones.
+- **Trade-off:** dependencies read from `request.app.state` instead of plain imports, which is a small indirection.
+
+### D46. `run_events.step` extended beyond analyst/critic/auditor
+- **Alternatives:** keep the 3 original steps and send other progress as transient SSE messages.
+- **Why:** the stream replays only what is in the DB (D41). The UI needs to show "fetching data", round boundaries (`consensus_check`, which also carries `forced_exit`) and failures (`error`). Storing them makes replay and history complete. CLAUDE.md's spec was updated.
+- **Trade-off:** more rows per run (about 3 + 3 per round); `fetch_data` stores only a summary to keep rows small.
+
+### D47. SSE implemented by polling the DB from a sync generator
+- **Alternatives:** `sse-starlette`; an async generator with an in-process pub/sub queue; Postgres LISTEN/NOTIFY.
+- **Why:**
+  - The simplest correct design: every 0.5s, read the status and the new events, send them, and stop when the run is finished.
+  - It works the same for a live run, a finished run and a resumed connection, and on SQLite and Postgres.
+  - A heartbeat comment every 15s keeps proxies from closing idle streams, and a 30-minute cap ends streams for stuck runs.
+- **Trade-off:**
+  - up to 0.5s of latency per event;
+  - one thread and one cheap query per poll for each open stream;
+  - fine for a handful of users, while pub/sub would scale further.

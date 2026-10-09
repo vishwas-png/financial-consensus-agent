@@ -2,7 +2,7 @@
 
 Sign in with Google, enter a stock ticker, and watch two AI agents argue about it live. An **Analyst** agent writes an investment thesis from market data and SEC filings; a **Critic** agent challenges it; they loop until they agree or hit a hard iteration cap. An **Auditor** agent (LLM-as-a-Judge) then checks every final claim against the retrieved SEC filing text and flags anything unsupported. All financial reasoning lives in prompts; the code plumbs data in and validated, structured output out.
 
-> Status: **Stages 0-5 complete** (design, schemas, DB models, market data, LLM tool calling, Analyst/Critic debate loop with iteration cap, RAG over SEC 10-K filings with citations, Auditor (LLM-as-a-Judge) and an eval harness). Later stages are planned below.
+> Status: **Stages 0-6 complete** (design, schemas, DB models, market data, LLM tool calling, Analyst/Critic debate loop with iteration cap, RAG over SEC 10-K filings with citations, Auditor (LLM-as-a-Judge), an eval harness, and a FastAPI backend with Google auth, quotas and live SSE streaming). Later stages are planned below.
 
 ## Architecture
 
@@ -99,7 +99,26 @@ Latest results (Groq free tier, `gpt-oss-120b`): extraction 4/4 · judge calibra
 
 Results are printed and saved to `backend/evals/results/` (gitignored). See [docs/DESIGN.md](docs/DESIGN.md#10-evaluation-harness-stage-5).
 
-Backend server and frontend: added in Stages 6 and 7.
+### API server
+
+```powershell
+cd backend
+venv\Scripts\activate
+uvicorn src.main:app --reload            # http://127.0.0.1:8000, interactive docs at /docs
+```
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /research` | Bearer | Start a run: `{"query": "How is Apple doing?", "max_iterations": 2}` → `202 {run_id, ticker}` |
+| `GET /research/{id}/stream` | Bearer | Server-Sent Events: `fetch_data`, `analyst`, `critic`, `consensus_check`, `auditor` (or `error`), then `end`. Supports `Last-Event-ID` |
+| `GET /research/{id}` | Bearer | Run status, all events, final output |
+| `GET /history` | Bearer | Your runs, newest first |
+| `GET /me` | Bearer | Your account and quota usage |
+| `GET /health` | none | Liveness check |
+
+Every authenticated call needs `Authorization: Bearer <Google ID token>` (the React frontend in Stage 7 obtains it with Google sign-in). Quota: 1 active run and 5 runs per rolling 24 hours per user.
+
+The frontend is added in Stage 7.
 
 ## Project status
 
@@ -111,7 +130,7 @@ Backend server and frontend: added in Stages 6 and 7.
 | 3 | LangGraph Analyst/Critic loop with iteration guardrail | ✅ Done |
 | 4 | RAG over SEC filings (ChromaDB) | ✅ Done |
 | 5 | Auditor (LLM-as-a-Judge) + eval harness | ✅ Done |
-| 6 | FastAPI: Google auth, quota, persistence, SSE | Planned |
+| 6 | FastAPI: Google auth, quota, persistence, SSE | ✅ Done |
 | 7 | React frontend | Planned |
 | 8 | Deployment + hardening | Planned |
 | 9 | Extensions | Planned |
@@ -127,6 +146,9 @@ Backend server and frontend: added in Stages 6 and 7.
 - Free-tier Groq rate limits cap throughput: `gpt-oss-120b` allows 8k tokens/minute and one agent call uses ~5k, so a 2-round debate takes about 2 minutes.
 - RAG uses only the latest 10-K (no 10-Qs or news) and only Items 1, 1A, 1C, 3, 7 and 7A; financial statement tables (Item 8) are not indexed. An indexed filing is not refreshed automatically when a newer 10-K comes out.
 - Filing excerpts are the company's own disclosures, not independent verification.
+- Runs execute in a thread pool inside the API process: at most 2 at once, a run in progress is lost (marked failed) if the server restarts, and the API must run as a single instance until a real job queue is added.
+- The quota check and run creation are not atomic, so two simultaneous requests from the same user could both start a run.
+- The live stream polls the database every 0.5 s (simple and robust, but not built for many concurrent viewers).
 - The first RAG run downloads a ~80 MB embedding model and the 10-K, so it is slow (minutes on a slow connection).
 - The debate loop is capped at `max_iterations` rounds (default 3); a forced exit is reported as unresolved disagreement rather than consensus.
 - A Critic "agreeing" is an LLM judgement, not proof the thesis is right; the Critic can be too lenient.

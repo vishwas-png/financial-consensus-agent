@@ -252,3 +252,56 @@ Stage 6: FastAPI backend.
 - SSE streaming of `stream_research` updates.
 
 This needs the Google OAuth client ID.
+
+## Stage 6: FastAPI backend (auth, quota, persistence, SSE)
+
+### Approved plan
+1. **Flow:** `POST /research` → verify the Google token → check quota → extract the ticker → create the run (pending) → hand it to the background worker → 202. The SSE stream replays the persisted `run_events` until `end`.
+2. **Decisions approved:**
+   - the graph runs in an in-process worker (2 runs at once overall), not inside the request;
+   - SSE uses the Authorization header (the frontend reads it with `fetch`);
+   - quota: 1 active run + 5 runs per rolling 24h, checked before any LLM call, and a failed extraction costs nothing;
+   - `run_events.step` gains `fetch_data`, `consensus_check` and `error`.
+3. **Files:** `api/auth.py`, `api/quota.py`, `api/jobs.py`, `api/routes_research.py`, `api/deps.py`, `main.py` (`create_app` factory), plus the DB helpers and config.
+4. **Tests:** `test_auth.py`, `test_quota.py`, `test_api.py` (plus `test_jobs.py`); live tests: the real Google verifier rejects a forged token, and a full live run through the API.
+5. **Docs and git:** DESIGN section 11, DECISIONS D41–D47, README, the CLAUDE.md spec. Branch `stage/6-api`, tag `stage-6-api`.
+
+### What was built
+| File | Purpose |
+|---|---|
+| `backend/src/api/auth.py` | `verify_google_token` (google-auth, plus issuer and email_verified checks), `get_current_user` (create/update the user, 401 on any failure) |
+| `backend/src/api/quota.py` | `check_quota`: 1 active run, 5 per 24h, HTTP 429 |
+| `backend/src/api/jobs.py` | `RunWorker`: thread pool, one committed event per graph step, `final_output`, user-safe error messages |
+| `backend/src/api/routes_research.py` | `POST /research`, `GET /research/{id}`, `GET /research/{id}/stream` (SSE), `GET /history`, `GET /me` |
+| `backend/src/api/deps.py` | `get_db` from `app.state.session_factory` |
+| `backend/src/main.py` | `create_app()` with injected collaborators; CORS; `/health`; startup marks stale runs failed |
+| `backend/src/db/models.py` | New `RunStep` values; `get_events_for_run`, `count_runs_since`, `count_active_runs`, `mark_stale_runs_failed` |
+| `backend/src/db/session.py` | `StaticPool` for in-memory SQLite (tests); `make_session_factory` |
+| `backend/src/config.py` | Quota and concurrency limits |
+| `backend/tests/test_auth.py`, `test_quota.py`, `test_jobs.py`, `test_api.py`, `api_helpers.py` | 18 + 7 + 12 + 27 tests (+2 live) |
+| `CLAUDE.md` | `run_events.step` spec |
+
+**Changes from the plan:**
+- Extra commit `refactor(db): share in-memory SQLite across threads`. API tests need one in-memory DB shared across threads.
+- `GET /research/{id}/stream` ends with `status: "timeout"` after 30 minutes, as a safety net for stuck runs.
+
+### How it was tested
+- `pytest -q`: **259 passed, 10 deselected**.
+- **Live:**
+  - `test_live_google_rejects_garbage_token`: the real google-auth rejected a forged JWT. Passed.
+  - `test_live_full_api_run`: real extraction ("How is Apple doing?" → AAPL), then a 1-round debate with RAG and the auditor, running on a real thread pool against a temp SQLite file. The streamed steps were `fetch_data, analyst, critic, consensus_check, auditor, end(done)`. Passed in about 4 minutes, including one rate-limit wait.
+- **Manual, with `uvicorn src.main:app --port 8765`:**
+  - `/health` returned 200;
+  - `POST /research` with no token returned 401 "Missing Authorization header";
+  - with a forged token it returned 401 "Invalid or expired Google ID token" (real Google verification);
+  - `/history` with no token returned 401;
+  - a CORS preflight from `http://localhost:5173` was allowed;
+  - OpenAPI lists all 6 routes.
+- **Not yet tested:** a real Google sign-in end to end. That needs the Stage 7 frontend to obtain a real ID token.
+
+### Next
+Stage 7: React (Vite) frontend.
+- Google sign-in.
+- Submit a ticker or question.
+- A live Analyst/Critic/Auditor stream via fetch-based SSE.
+- Per-user history.
