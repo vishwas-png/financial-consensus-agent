@@ -82,7 +82,7 @@ def test_retry_after_header_respected_and_capped() -> None:
     huge = status_error(groq.RateLimitError, 429, headers={"retry-after": "600"})
     client, _, sleeps = make_client([short, huge, ok_response()])
     client.chat([], model="m")
-    assert sleeps == [5.0, 30.0]
+    assert sleeps == [5.0, 60.0]
 
 
 def test_server_error_and_timeout_are_retried() -> None:
@@ -137,3 +137,12 @@ def test_live_simple_chat() -> None:
 
     message = GroqClient().chat([{"role": "user", "content": "Reply with the word OK."}], model=TOOL_CALL_MODEL)
     assert message.content and "OK" in message.content.upper()
+
+
+def test_default_client_tries_four_times() -> None:
+    connection_error = groq.APIConnectionError(request=REQUEST)
+    sdk = FakeSDK([connection_error] * 4)
+    client = GroqClient(sdk=sdk, sleep=lambda s: None)
+    with pytest.raises(LLMUnavailableError):
+        client.chat([], model="m")
+    assert len(sdk.requests) == 4

@@ -23,7 +23,7 @@ RETRYABLE_ERRORS = (
     groq.APIConnectionError,  # also covers APITimeoutError (a subclass)
     groq.InternalServerError,
 )
-MAX_RETRY_AFTER_SECONDS = 30.0
+MAX_RETRY_AFTER_SECONDS = 60.0  # Groq token-per-minute resets can take ~50s
 
 
 class LLMError(Exception):
@@ -80,7 +80,7 @@ class GroqClient:
     def __init__(
         self,
         api_key: str | None = GROQ_API_KEY,
-        max_attempts: int = 3,
+        max_attempts: int = 4,
         base_delay: float = 1.0,
         sleep: Callable[[float], None] = time.sleep,
         sdk: Any = None,

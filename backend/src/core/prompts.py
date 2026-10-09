@@ -28,7 +28,8 @@ How to read the market data JSON:
   growth. For annual growth, compare `total_revenue` across `annual_financials`.
 - `dividend_yield_pct` is already a PERCENT: 0.32 means 0.32%, not 32%.
 - `debt_to_equity` is a PERCENT: 78.4 means debt is 0.784x equity.
-- `annual_financials` is newest first; `price_history` is weekly closes, oldest first.
+- `annual_financials` is newest first; `price_history` is about one close per month over the last
+  year (oldest first; the last point is the latest weekly close).
 - A value of null means the data source did not provide it. Do not guess it.
 """
 

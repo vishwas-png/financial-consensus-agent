@@ -80,7 +80,7 @@ def test_fetch_data_propagates_not_found() -> None:
 def test_analyst_first_round_prompt_has_data_but_no_feedback() -> None:
     messages = build_analyst_messages(GraphState(ticker="AAPL", raw_data=RAW_DATA))
     assert messages[0]["role"] == "system"
-    assert '"trailing_pe": 39.0' in messages[1]["content"]
+    assert '"trailing_pe":39.0' in messages[1]["content"]
     assert "REVISION" not in messages[1]["content"]
 
 
@@ -105,7 +105,7 @@ def test_analyst_node_returns_only_analyst_output() -> None:
 def test_critic_prompt_includes_data_and_thesis() -> None:
     state = GraphState(ticker="AAPL", raw_data=RAW_DATA, analyst_output=ANALYSIS)
     content = build_critic_messages(state)[1]["content"]
-    assert '"trailing_pe": 39.0' in content
+    assert '"trailing_pe":39.0' in content
     assert "AAPL is fairly valued." in content
     assert "round 1" in content
 
@@ -194,3 +194,17 @@ def test_bracketed_citation_rejected_with_hint() -> None:
     update = make_analyst_node(client)(GraphState(ticker="AAPL", raw_data=RAW_DATA, filing_chunks=CHUNKS))
     assert update["analyst_output"].filing_citations == ["AAPL-10K-2025-1A-003"]
     assert len(client.calls) == 2
+
+
+def test_prompt_market_data_is_compact_and_downsampled() -> None:
+    import json
+
+    from src.core.nodes.context import PRICE_HISTORY_STEP, prompt_market_data
+
+    history = [{"date": f"2025-01-{i + 1:02d}", "close": float(i)} for i in range(10)]
+    raw = {"ticker": "AAPL", "price_history": history}
+    text = prompt_market_data(raw)
+    assert ", " not in text and "\n" not in text  # compact separators
+    sampled = json.loads(text)["price_history"]
+    assert sampled == history[::PRICE_HISTORY_STEP] + [history[-1]]  # last close always kept
+    assert raw["price_history"] == history  # state data itself is not modified

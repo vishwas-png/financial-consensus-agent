@@ -205,3 +205,7 @@ def test_live_single_round_debate() -> None:
     assert final.critic_feedback is not None
     assert final.iteration_count == 1
     assert final.forced_exit is (not final.critic_feedback.agrees)
+    # Stage 4: real 10-K excerpts were retrieved, and every citation points at one of them
+    assert final.filing_chunks
+    provided_ids = {chunk.split("]")[0].lstrip("[") for chunk in final.filing_chunks}
+    assert set(final.analyst_output.filing_citations) <= provided_ids
