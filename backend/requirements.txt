@@ -11,3 +11,6 @@ numpy==2.5.3
 
 # Stage 2: LLM client (Groq)
 groq==1.7.0
+
+# Stage 3: agent graph
+langgraph==1.2.14
