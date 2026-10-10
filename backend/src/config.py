@@ -5,6 +5,7 @@ are never hardcoded here.
 """
 
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -33,6 +34,10 @@ def parse_origins(value: str) -> list[str]:
 # Browser origins allowed to call the API (comma-separated, e.g. the Vercel URL + localhost)
 FRONTEND_ORIGINS: list[str] = parse_origins(os.getenv("FRONTEND_ORIGIN", "http://localhost:5173"))
 FRONTEND_ORIGIN: str = FRONTEND_ORIGINS[0] if FRONTEND_ORIGINS else "http://localhost:5173"
+
+# A browser origin is exactly scheme://host[:port]: no path, quotes, spaces or wildcards
+ORIGIN_PATTERN = re.compile(r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$")
+
 
 def normalize_database_url(url: str) -> str:
     """Make hosted Postgres URLs use the psycopg (v3) driver.
@@ -84,7 +89,12 @@ def production_config_problems(env: dict[str, str] | None = None) -> list[str]:
     database_url = env.get("DATABASE_URL", "")
     if database_url.startswith("sqlite"):
         problems.append("DATABASE_URL must point to Postgres in production (SQLite files are lost on redeploy)")
-    if any(origin.startswith("http://") and "localhost" not in origin
-           for origin in parse_origins(env.get("FRONTEND_ORIGIN", ""))):
+    origins = parse_origins(env.get("FRONTEND_ORIGIN", ""))
+    # Origins are public URLs, so naming the bad one is safe (and makes the fix obvious)
+    malformed = [origin for origin in origins if not ORIGIN_PATTERN.match(origin)]
+    if malformed:
+        problems.append(f"FRONTEND_ORIGIN has malformed origin(s) {malformed}; "
+                        "expected e.g. https://app.vercel.app,http://localhost:5173 (no quotes)")
+    if any(origin.startswith("http://") and "localhost" not in origin for origin in origins):
         problems.append("FRONTEND_ORIGIN must use https:// (except localhost)")
     return problems
