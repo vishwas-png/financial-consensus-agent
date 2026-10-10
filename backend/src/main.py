@@ -25,6 +25,8 @@ from src.db.session import SessionLocal
 STREAM_POLL_SECONDS = 0.5
 STREAM_MAX_SECONDS = 30 * 60  # a run that hasn't finished after 30 minutes is treated as stuck
 
+logger = logging.getLogger(__name__)
+
 
 def configure_logging() -> None:
     """One readable log format; quiet noisy libraries."""
@@ -59,6 +61,7 @@ def create_app(
             raise RuntimeError("Refusing to start in production: " + "; ".join(problems))
 
     worker = worker or RunWorker(session_factory)
+    allowed_origins = frontend_origins if frontend_origins is not None else FRONTEND_ORIGINS
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -69,6 +72,7 @@ def create_app(
             Base.metadata.create_all(bind=engine)
         with session_factory() as db:
             mark_stale_runs_failed(db)  # runs interrupted by the last shutdown can't resume
+        logger.info("CORS allowed origins: %s", allowed_origins)  # public URLs, not secrets
         yield
         worker.shutdown()
 
@@ -83,7 +87,7 @@ def create_app(
     # Only our frontend(s) may call the API from a browser. No cookies are used (Bearer tokens).
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=frontend_origins if frontend_origins is not None else FRONTEND_ORIGINS,
+        allow_origins=allowed_origins,
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
     )

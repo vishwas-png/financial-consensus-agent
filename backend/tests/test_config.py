@@ -31,10 +31,20 @@ def test_complete_production_config_has_no_problems() -> None:
     ({"SEC_USER_AGENT": ""}, "SEC_USER_AGENT is not set"),
     ({"DATABASE_URL": "sqlite:///./app.db"}, "must point to Postgres"),
     ({"FRONTEND_ORIGIN": "http://fca.example.com"}, "must use https://"),
+    ({"FRONTEND_ORIGIN": '"https://fca.vercel.app,http://localhost:5173"'}, "malformed origin"),
+    ({"FRONTEND_ORIGIN": "fca.vercel.app"}, "malformed origin"),
+    ({"FRONTEND_ORIGIN": "https://fca.vercel.app/app"}, "malformed origin"),
+    ({"FRONTEND_ORIGIN": "*"}, "malformed origin"),
 ])
 def test_production_problems_detected(change: dict[str, str], expected: str) -> None:
     problems = production_config_problems(GOOD_ENV | change)
     assert any(expected in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize("value", ["https://fca.vercel.app,http://localhost:5173",
+                                   " https://fca.vercel.app/ ", "http://localhost:5173"])
+def test_well_formed_origins_accepted(value: str) -> None:
+    assert production_config_problems(GOOD_ENV | {"FRONTEND_ORIGIN": value}) == []
 
 
 def test_problems_never_contain_secret_values() -> None:
