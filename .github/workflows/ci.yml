@@ -94,8 +94,10 @@ jobs:
         run: docker image ls fca-api --format 'fca-api image size {{.Size}}'
 
       - name: Embedding model is baked in (works with networking disabled) + peak memory estimate
+        # `-i` is required: without it the script below never reaches python's stdin, python runs
+        # nothing and exits 0, and the step "passes" without checking anything (seen in CI run 1).
         run: |
-          docker run --rm --network none $PROD_ENV fca-api python - <<'EOF'
+          docker run -i --rm --network none $PROD_ENV fca-api python - <<'EOF' | tee probe.txt
           import resource
           from src.main import app  # imports FastAPI, LangGraph, pandas/yfinance, chromadb, google-auth
           from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
@@ -113,6 +115,7 @@ jobs:
           print(f"html size {len(html) / 1e6:.1f} MB, peak RSS {peak_mb:.0f} MB (Render free tier: 512 MB)")
           assert peak_mb < 450, "too close to the 512 MB limit"
           EOF
+          grep -q "peak RSS" probe.txt || { echo "probe printed nothing: it did not run"; exit 1; }
 
       - name: Container starts, runs migrations, and serves /health
         run: |
