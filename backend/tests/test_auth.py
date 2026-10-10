@@ -127,3 +127,46 @@ def test_live_google_rejects_garbage_token() -> None:
     forged = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2UifQ.eyJzdWIiOiIxIn0.c2lnbmF0dXJl"
     with pytest.raises(AuthError):
         verify_google_token(forged, client_id=GOOGLE_CLIENT_ID)
+
+
+# ---------- Parallel first sign-in (found by the Postgres CI test) ----------
+
+def test_parallel_first_sign_in_does_not_crash() -> None:
+    """Another request creates the user between our 'not found' check and our insert."""
+    from src.api.auth import get_or_create_user
+
+    factory = memory_session_factory()
+    identity = GoogleIdentity(sub="newbie", email="newbie@example.com")
+    with factory() as db:
+        real_get = db.get
+        calls = {"n": 0}
+
+        def get_racing(model, key):  # type: ignore[no-untyped-def]
+            calls["n"] += 1
+            if calls["n"] == 1:
+                with factory() as other_request:  # the parallel request wins the race
+                    other_request.add(User(id="newbie", email="newbie@example.com"))
+                    other_request.commit()
+                return None  # ...but our request had already looked and seen nothing
+            return real_get(model, key)
+
+        db.get = get_racing  # type: ignore[method-assign]
+        user = get_or_create_user(db, identity)
+
+    assert user.id == "newbie" and user.email == "newbie@example.com"
+    with factory() as db:
+        assert db.query(User).count() == 1
+
+
+def test_email_taken_by_another_account_is_a_clear_409() -> None:
+    from fastapi import HTTPException
+
+    from src.api.auth import get_or_create_user
+
+    factory = memory_session_factory()
+    with factory() as db:
+        db.add(User(id="old-account", email="shared@example.com"))
+        db.commit()
+        with pytest.raises(HTTPException) as excinfo:
+            get_or_create_user(db, GoogleIdentity(sub="new-account", email="shared@example.com"))
+    assert excinfo.value.status_code == 409

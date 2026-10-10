@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import Depends, Header, HTTPException, Request, status
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db
@@ -84,12 +85,28 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         ) from error
 
+    return get_or_create_user(db, identity)
+
+
+def get_or_create_user(db: Session, identity: GoogleIdentity) -> User:
+    """Load the user, creating it on first sign-in. Safe when requests arrive in parallel.
+
+    A new user's first page load sends several API calls at once. Each sees "no user yet"
+    and tries to insert the same id; all but one hit the primary-key constraint. The losers
+    roll back and load the row the winner created (found by the Postgres CI test).
+    """
     user = db.get(User, identity.sub)
     if user is None:
-        user = User(id=identity.sub, email=identity.email)
-        db.add(user)
-        db.commit()
-    elif user.email != identity.email:
+        db.add(User(id=identity.sub, email=identity.email))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()  # a parallel request created this user first
+        user = db.get(User, identity.sub)
+        if user is None:  # not a race: e.g. the email belongs to a different account id
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="This Google account could not be registered. Please contact support.")
+    if user.email != identity.email:
         user.email = identity.email  # the Google account's email changed; sub stays the same
         db.commit()
     return user
