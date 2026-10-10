@@ -13,8 +13,13 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from src.config import DATABASE_URL
+from src.config import DATABASE_URL, IS_PRODUCTION, production_config_problems
 from src.db.models import Base
+
+# In production the container runs migrations BEFORE the app starts, so check the settings here
+# too: otherwise a missing DATABASE_URL would silently fall back to a local SQLite file.
+if IS_PRODUCTION and (problems := production_config_problems()):
+    raise RuntimeError("Refusing to start in production: " + "; ".join(problems))
 
 config = context.config
 if config.config_file_name is not None and config.attributes.get("configure_logging", True):
