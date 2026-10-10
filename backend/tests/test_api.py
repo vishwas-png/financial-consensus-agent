@@ -5,6 +5,7 @@ and a fake graph. The worker runs jobs inline, so a POST finishes the whole run.
 """
 
 import json
+import os
 from collections.abc import Iterator
 from concurrent.futures import Executor, Future
 from typing import Any
@@ -271,3 +272,89 @@ def test_live_full_api_run(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert steps == ["fetch_data", "analyst", "critic", "consensus_check", "auditor", "end"], steps
     assert events[-1]["data"] == {"status": "done"}
     assert events[0]["data"]["content"]["filing_excerpts"] > 0
+
+
+# ---------- Quota race (Stage 8: check + insert must be atomic) ----------
+
+def test_quota_rechecked_after_slow_extraction() -> None:
+    """A run started by a parallel request while we extract the ticker must be counted."""
+    factory = memory_session_factory()
+
+    def extractor_with_parallel_request(query: str) -> str:
+        # Simulates another request from the same user finishing first, during our LLM call
+        with factory() as db:
+            db.add(ResearchRun(user_id="alice", ticker="MSFT"))  # pending = active run
+            db.commit()
+        return "AAPL"
+
+    worker = RunWorker(factory, run_graph=fake_graph, executor=NeverRunsExecutor())
+    app = create_app(session_factory=factory, token_verifier=fake_verifier, worker=worker,
+                     ticker_extractor=extractor_with_parallel_request, stream_poll_seconds=0.01)
+    with TestClient(app) as race_client:
+        response = start(race_client, ALICE)
+        assert response.status_code == 429, response.text
+        assert "in progress" in response.json()["detail"]
+        assert [run["ticker"] for run in race_client.get("/history", headers=ALICE).json()] == ["MSFT"]
+
+
+@pytest.mark.postgres
+@pytest.mark.skipif(not os.getenv("TEST_POSTGRES_URL"), reason="set TEST_POSTGRES_URL to run against Postgres")
+def test_concurrent_requests_cannot_both_start_a_run_on_postgres() -> None:
+    """Two truly simultaneous POSTs from one user: the row lock lets exactly one through."""
+    import threading
+
+    from alembic import command
+
+    from src.config import normalize_database_url
+    from src.db.session import make_engine, make_session_factory
+    from tests.test_migrations import alembic_config
+
+    url = normalize_database_url(os.environ["TEST_POSTGRES_URL"])
+    command.downgrade(alembic_config(url), "base")
+    command.upgrade(alembic_config(url), "head")
+    engine = make_engine(url)
+    factory = make_session_factory(engine)
+
+    both_extracting = threading.Barrier(2, timeout=10)
+
+    def slow_extractor(query: str) -> str:
+        both_extracting.wait()  # both requests have passed the first quota check
+        return "AAPL"
+
+    worker = RunWorker(factory, run_graph=fake_graph, executor=NeverRunsExecutor())
+    app = create_app(session_factory=factory, token_verifier=fake_verifier, worker=worker,
+                     ticker_extractor=slow_extractor, stream_poll_seconds=0.01)
+    statuses: list[int] = []
+
+    def post() -> None:
+        with TestClient(app) as client:
+            statuses.append(start(client, ALICE).status_code)
+
+    threads = [threading.Thread(target=post) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    with factory() as db:
+        runs = db.query(ResearchRun).filter(ResearchRun.user_id == "alice").count()
+    engine.dispose()
+    assert sorted(statuses) == [202, 429], statuses
+    assert runs == 1
+
+
+def test_company_without_us_listing_is_a_clear_422() -> None:
+    from src.core.tool_calling import NoUSListingError
+
+    def declining_extractor(query: str) -> str:
+        raise NoUSListingError("no US listing")
+
+    factory = memory_session_factory()
+    app = create_app(session_factory=factory, token_verifier=fake_verifier,
+                     worker=RunWorker(factory, run_graph=fake_graph, executor=InlineExecutor()),
+                     ticker_extractor=declining_extractor)
+    with TestClient(app) as client:
+        response = start(client, ALICE, query="What do you think of Reliance Industries?")
+        assert response.status_code == 422
+        assert "doesn't appear to have a US stock listing" in response.json()["detail"]
+        assert client.get("/history", headers=ALICE).json() == []  # no run, no quota used

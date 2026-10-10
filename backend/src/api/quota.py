@@ -9,10 +9,11 @@ Failed runs still count toward the daily limit: they consumed LLM calls too.
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.config import MAX_ACTIVE_RUNS_PER_USER, RUNS_PER_DAY
-from src.db.models import count_active_runs, count_runs_since
+from src.db.models import User, count_active_runs, count_runs_since
 
 QUOTA_WINDOW = timedelta(hours=24)
 
@@ -39,3 +40,13 @@ def check_quota(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Daily limit reached: {used}/{runs_per_day} research runs in the last 24 hours.",
         )
+
+
+def lock_user_for_quota(db: Session, user_id: str) -> None:
+    """Lock this user's row until the current transaction ends (Postgres: SELECT ... FOR UPDATE).
+
+    Two simultaneous requests from the same user then run "check quota + insert run" one after
+    the other, so both can't pass the active-run check (D43). Other users are not blocked.
+    SQLite ignores FOR UPDATE; it is only used for local dev/tests, where this race is acceptable.
+    """
+    db.execute(select(User.id).where(User.id == user_id).with_for_update())

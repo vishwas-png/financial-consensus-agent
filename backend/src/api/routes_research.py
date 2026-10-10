@@ -18,10 +18,11 @@ from sqlalchemy.orm import Session
 
 from src.api.auth import get_current_user
 from src.api.deps import get_db
-from src.api.quota import QUOTA_WINDOW, check_quota
+from src.api.quota import QUOTA_WINDOW, check_quota, lock_user_for_quota
 from src.clients.groq_client import LLMError, LLMUnavailableError
 from src.config import MAX_ACTIVE_RUNS_PER_USER, MAX_ITERATIONS, MAX_USER_ITERATIONS, RUNS_PER_DAY
 from src.core.structured_output import ToolCallError
+from src.core.tool_calling import NoUSListingError
 from src.db.models import (
     ResearchRun,
     RunEvent,
@@ -93,10 +94,16 @@ def start_research(
     db: Session = Depends(get_db),
 ) -> RunCreated:
     """Check quota, identify the ticker, create the run and start it in the background."""
-    check_quota(db, user.id)  # BEFORE any LLM call
+    check_quota(db, user.id)  # fast fail BEFORE any LLM call
+    db.commit()  # end this read transaction; don't keep it open during the slow LLM call
 
     try:
         ticker: str = request.app.state.ticker_extractor(body.query)
+    except NoUSListingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="That company doesn't appear to have a US stock listing. This app covers US-listed stocks only.",
+        ) from error
     except ToolCallError as error:
         # No run is created, so a failed extraction costs the user no quota
         raise HTTPException(
@@ -110,9 +117,13 @@ def start_research(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
                             detail="The AI service returned an error. Please try again.") from error
 
+    # Check again and insert atomically: another request from this user may have started a run
+    # while we were extracting the ticker. The row lock makes those requests take turns.
+    lock_user_for_quota(db, user.id)
+    check_quota(db, user.id)
     run = ResearchRun(user_id=user.id, ticker=ticker)
     db.add(run)
-    db.commit()
+    db.commit()  # releases the lock
     request.app.state.worker.submit(run.id, ticker, body.max_iterations)
     return RunCreated(run_id=run.id, ticker=ticker, status=run.status.value)
 

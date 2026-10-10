@@ -13,6 +13,8 @@ US stock ticker (NYSE or NASDAQ).
 - Share classes use a hyphen, never a dot: BRK-B (not BRK.B), BF-B (not BF.B).
 - Never add an exchange suffix such as .NS, .L or .TO.
 - If the user already gives a ticker, use it as written (uppercased).
+- If the company has NO US stock listing (it trades only on a foreign exchange, or it is private),
+  call the tool with no_us_listing set to true and no ticker. Never invent a ticker.
 - Always respond by calling the tool. Do not answer in plain text.
 """
 

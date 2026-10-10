@@ -12,6 +12,7 @@ core/ never sees user_id: the worker passes only the ticker and settings.
 """
 
 import logging
+import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from typing import Any
@@ -21,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.clients.groq_client import LLMError, LLMUnavailableError
-from src.config import MAX_CONCURRENT_RUNS
+from src.config import MAX_CONCURRENT_RUNS, RUN_TIMEOUT_SECONDS
 from src.core.graph import stream_research
 from src.core.state import GraphState
 from src.core.structured_output import ToolCallError
@@ -89,13 +90,19 @@ def user_message(error: Exception, ticker: str) -> str:
         return "The AI service returned an error. Please try again later."
     if isinstance(error, GraphRecursionError):
         return "The debate hit a safety limit and was stopped."
+    if isinstance(error, RunTimeoutError):
+        return "The research took too long (the AI service may be very busy) and was stopped. Please try again later."
     return "Something went wrong while running the research. Please try again."
+
+
+class RunTimeoutError(Exception):
+    """The run exceeded RUN_TIMEOUT_SECONDS."""
 
 
 # ---------- Worker ----------
 
 class RunWorker:
-    """Runs research jobs in a bounded thread pool. Inject `run_graph` / `executor` in tests."""
+    """Runs research jobs in a bounded thread pool. Inject `run_graph` / `executor` / `clock` in tests."""
 
     def __init__(
         self,
@@ -103,10 +110,14 @@ class RunWorker:
         run_graph: GraphRunner = stream_research,
         executor: Executor | None = None,
         max_concurrent: int = MAX_CONCURRENT_RUNS,
+        run_timeout_seconds: float = RUN_TIMEOUT_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._session_factory = session_factory
         self._run_graph = run_graph
         self._executor = executor or ThreadPoolExecutor(max_workers=max_concurrent, thread_name_prefix="research-run")
+        self._run_timeout = run_timeout_seconds
+        self._clock = clock
 
     def submit(self, run_id: str, ticker: str, max_iterations: int) -> Future:
         """Queue a run. Returns immediately; the run stays 'pending' until a thread is free."""
@@ -121,13 +132,17 @@ class RunWorker:
                 return
             run.status = RunStatus.RUNNING
             db.commit()
+            started = time.monotonic()
+            logger.info("Run %s started: %s, max_iterations=%d", run_id, ticker, max_iterations)
             try:
                 state = self._stream_and_save(db, run_id, ticker, max_iterations)
                 run.final_output = final_output(state)
                 run.status = RunStatus.DONE
                 db.commit()
+                logger.info("Run %s done in %.0fs: rounds=%d forced_exit=%s", run_id,
+                            time.monotonic() - started, state.iteration_count, state.forced_exit)
             except Exception as error:  # the job must always end in a recorded state
-                logger.exception("Run %s (%s) failed", run_id, ticker)
+                logger.exception("Run %s (%s) failed after %.0fs", run_id, ticker, time.monotonic() - started)
                 db.rollback()
                 db.add(RunEvent(run_id=run_id, step=RunStep.ERROR,
                                 content={"message": user_message(error, ticker), "type": type(error).__name__}))
@@ -135,12 +150,26 @@ class RunWorker:
                 db.commit()
 
     def _stream_and_save(self, db: Session, run_id: str, ticker: str, max_iterations: int) -> GraphState:
-        """Save one event per graph step and rebuild the final state from the updates."""
+        """Save one event per graph step and rebuild the final state from the updates.
+
+        The deadline is checked between steps: a thread can't be killed mid-call, but every
+        single step is itself bounded (Groq request timeout x retry attempts), so a run ends
+        at most one step after RUN_TIMEOUT_SECONDS.
+        """
+        deadline = self._clock() + self._run_timeout
         state = GraphState(ticker=ticker, max_iterations=max_iterations)
-        for node, update in self._run_graph(ticker, max_iterations=max_iterations):
-            state = state.model_copy(update=update)
-            db.add(RunEvent(run_id=run_id, step=RunStep(node), content=event_content(node, update)))
-            db.commit()  # commit per step so the stream can show it immediately
+        steps = self._run_graph(ticker, max_iterations=max_iterations)
+        try:
+            for node, update in steps:
+                state = state.model_copy(update=update)
+                db.add(RunEvent(run_id=run_id, step=RunStep(node), content=event_content(node, update)))
+                db.commit()  # commit per step so the stream can show it immediately
+                if self._clock() > deadline:
+                    raise RunTimeoutError(f"Run exceeded {self._run_timeout:.0f}s")
+        finally:
+            close = getattr(steps, "close", None)
+            if close is not None:
+                close()  # stop the graph generator so it doesn't start another LLM call
         return state
 
     def shutdown(self) -> None:
