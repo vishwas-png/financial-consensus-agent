@@ -191,8 +191,11 @@ def test_unidentifiable_company_is_422_and_uses_no_quota(client: TestClient) -> 
     assert client.get("/me", headers=ALICE).json()["quota"]["runs_last_24h"] == 0
 
 
-def test_llm_unavailable_during_extraction_is_503(client: TestClient) -> None:
-    assert start(client, ALICE, query="busy busy").status_code == 503
+def test_llm_unavailable_during_extraction_is_503(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
+    response = start(client, ALICE, query="busy busy")
+    assert response.status_code == 503
+    assert "429" not in response.json()["detail"]  # internal details stay out of the response...
+    assert "LLM unavailable: 429" in caplog.text   # ...but reach the server log for debugging
 
 
 # ---------- Quota through the API ----------
