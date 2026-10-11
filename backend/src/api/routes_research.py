@@ -6,6 +6,7 @@ doesn't even confirm that the run exists.
 """
 
 import json
+import logging
 import time
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,8 @@ from src.db.models import (
     get_run_for_user,
     get_runs_for_user,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -111,9 +114,12 @@ def start_research(
             detail="Couldn't identify a single US-listed company in your request. Try a company name or ticker.",
         ) from error
     except LLMUnavailableError as error:
+        # Groq's error text names the cause (429 rate limit, connection, 5xx); it holds no secrets
+        logger.warning("Ticker extraction failed, LLM unavailable: %s", error)
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="The AI service is busy. Please try again in a minute.") from error
     except LLMError as error:
+        logger.warning("Ticker extraction failed, LLM error: %s", error)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
                             detail="The AI service returned an error. Please try again.") from error
 
