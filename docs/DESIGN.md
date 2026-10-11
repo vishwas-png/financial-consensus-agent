@@ -272,3 +272,38 @@ flowchart LR
   - If the connection drops without an `end` event, it reconnects with `Last-Event-ID`, up to 3 times. HTTP errors such as 404 are not retried.
 - **One reducer for live and replay:** `runReducer` groups events into rounds (analyst → critic → result) and records the auditor verdict and errors. It ignores event ids it has already applied, so a live run, a reconnect and a finished run replayed from history all render identically.
 - **Configuration:** `frontend/.env` holds `VITE_API_URL` and `VITE_GOOGLE_CLIENT_ID` (gitignored; `.env.example` is committed). The dev server is pinned to port 5173, which must match the backend's `FRONTEND_ORIGIN` and the OAuth client's authorized JavaScript origin.
+
+## 13. Deployment (Stage 8)
+
+```mermaid
+flowchart LR
+    U[Browser] -- static app + CSP --> V[Vercel<br/>React build]
+    U -- Google sign-in --> G[Google Identity Services]
+    U -- Bearer ID token<br/>JSON + SSE --> R[Render free web service<br/>Docker: alembic upgrade, then Uvicorn<br/>512 MB, ~0.1 CPU, 1 run at a time]
+    R -- psycopg, pool_pre_ping --> N[(Neon Postgres 17<br/>users, research_runs, run_events)]
+    R -- tool calling + reasoning --> Q[Groq<br/>gpt-oss-20b / 120b]
+    R -- 10-K download --> S[SEC EDGAR]
+    R -- filing + query embeddings --> C[Cohere embed-english-v3.0]
+    R -- vectors, wiped on redeploy/sleep --> CH[(ChromaDB on local disk)]
+    GH[GitHub main] -- auto-deploy --> R
+    GH -- auto-deploy --> V
+    GH -- every push --> CI[GitHub Actions<br/>tests, Postgres tests,<br/>image build + probes]
+```
+
+- **Configuration as code:**
+  - `render.yaml` (Blueprint) defines the service. Secrets are `sync: false`, so they are entered only in the Render dashboard.
+  - `frontend/vercel.json` adds the SPA rewrite and the security headers. Its CSP allows only Google Identity Services and the Render API URL.
+  - The repo holds no secrets; only `.env.example` files with placeholders are committed.
+- **Startup:**
+  - The container runs `alembic upgrade head` and then Uvicorn, as a non-root user.
+  - With `APP_ENV=production`, the app refuses to start if a setting is missing or malformed (D57).
+  - It logs the allowed CORS origins.
+- **Request path:**
+  - `UnhandledErrorMiddleware` sits inside `CORSMiddleware`, so even a crash returns a 500 the browser can read.
+  - `SecurityHeadersMiddleware` adds `nosniff`, `DENY`, `no-referrer` and a `default-src 'none'` CSP.
+- **Database sessions:** each read ends its transaction as soon as it's done, including after sign-in and in the worker between steps. A long SSE stream never holds a transaction open, and Neon terminates idle transactions (D63).
+- **Embeddings:** `EMBEDDING_PROVIDER=cohere` in production and `local` everywhere else (D62). First-time ingestion of a 10-K takes about 30 s. `fetch_data` waits at most 120 s and otherwise continues without excerpts.
+- **Limits that follow from the free tiers:**
+  - the service sleeps after 15 minutes idle (the first request after that takes about a minute);
+  - ChromaDB and downloaded filings are lost on every sleep and deploy, so a ticker's first run after a wake-up re-indexes its 10-K;
+  - one research run executes at a time.

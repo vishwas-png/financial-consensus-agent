@@ -353,3 +353,108 @@ Stage 8: deployment and hardening.
 - A CSP header.
 - An atomic quota check.
 - Alembic migrations.
+
+## Stage 8: Deployment + hardening
+
+### Approved plan
+- **Hosting (all free):**
+  - **Neon** Postgres;
+  - **Render** web service (Docker) for the backend, with `MAX_CONCURRENT_RUNS=1` on 512 MB (about 231 MB measured locally with everything loaded);
+  - **Vercel** for the frontend.
+  - The repo stays private.
+- **From the owner:**
+  - create Neon, Render and Vercel accounts (sign in with GitHub) and give Render and Vercel access to the repo;
+  - paste secrets only into the dashboards;
+  - add the Vercel URL to Google's Authorized JavaScript origins.
+- **Hardening:**
+  1. Postgres support and Alembic migrations.
+  2. Atomic quota check (row lock).
+  3. Production config: refuse to start if a setting is missing, multiple CORS origins, security headers, logging.
+  4. Groq request timeout and an overall run timeout.
+  5. A `no_us_listing` option for ticker extraction.
+  6. Dockerfile (model downloaded at build time), `render.yaml`, `vercel.json` with a CSP.
+  7. GitHub Actions CI.
+  8. Docs.
+- **Verification:**
+  - offline tests;
+  - Postgres tests (migrations, concurrent quota race);
+  - a local Docker image (health check, model already present, peak memory during a first 10-K ingestion);
+  - a deployed smoke test with the owner signing in.
+
+### Change to the plan (owner decisions)
+- **Docker image verification:** Docker Desktop couldn't run locally (its WSL VM was missing, and BIOS virtualization couldn't be changed), so the image is verified in GitHub Actions instead (D60).
+- **Embeddings:** first-time 10-K ingestion was far too slow on Render's ~0.1 CPU.
+  - The owner chose a hosted embedding API.
+  - Gemini's free tier was measured too slow (586 s per 10-K).
+  - The owner then chose Cohere, measured at 27–29 s per 10-K (D62).
+
+### What was built
+- **Database:**
+  - Postgres support via psycopg 3;
+  - Alembic migrations (the initial schema), run at container start;
+  - `normalize_database_url` for `postgres://` URLs.
+- **Quota and runs:**
+  - atomic quota: a row lock on the user, then a re-check before inserting the run;
+  - a race-safe first sign-in (`get_or_create_user`);
+  - stuck runs expire after 15 minutes (`expire_stuck_runs`), and the worker stops when its run has been expired.
+- **Production config:**
+  - `APP_ENV=production` refuses to start when something is missing or malformed: secrets, a SQLite URL, malformed or `http://` origins, the Cohere key;
+  - settings are trimmed of pasted whitespace;
+  - multiple CORS origins, logged at startup;
+  - security headers;
+  - `UnhandledErrorMiddleware` (crash 500s keep their CORS headers).
+- **Timeouts:**
+  - Groq: 60 s per request, with auth and HTTP errors wrapped in `LLMError` types;
+  - filing ingestion: at most 120 s, then the run continues without excerpts;
+  - run timeout 600 s; run expiry 15 minutes.
+- **Embeddings:**
+  - `EMBEDDING_PROVIDER=local|cohere`: `CohereEmbedder` (batches of 96, document and query input types, retry with backoff);
+  - one Chroma collection per model;
+  - local embedding batches of 8 to stay under 512 MB;
+  - timing logs for each ingestion phase.
+- **Short database transactions:** reads commit right after auth and between worker steps, so Neon never sees an idle transaction.
+- **Ticker extraction:** `no_us_listing` lets the model decline non-US companies, returning a 422 that uses no quota.
+- **Deployment files:**
+  - `backend/Dockerfile` (non-root; the local model is baked in at build time) and `.dockerignore`;
+  - `render.yaml`;
+  - `frontend/vercel.json` (CSP and headers) with `deploy.test.ts`;
+  - `.github/workflows/ci.yml`: backend (offline and Postgres 17), frontend, and the Docker image with in-container probes.
+- **Deployed:**
+  - Neon (Postgres 17, Oregon);
+  - Render: `https://financial-consensus-api.onrender.com`;
+  - Vercel: `https://financial-consensus-agent.vercel.app`.
+
+### How it was tested
+- **Backend:** 344 offline tests pass. Postgres-marked tests run in CI (migrations up/down/up with a drift check, and the concurrent quota race). Opt-in live tests for Groq and Cohere pass.
+- **Frontend:** 67 tests pass; lint, type check and build are clean.
+- **CI:** the last run on `stage/8-deploy` passed all jobs (backend, frontend, docker-image). The image probe measured a peak of 416 MB, under 512 MB.
+- **"Fails without the fix" checks:** these new tests were run against the code with the fix removed, to confirm they fail:
+  - the quota race;
+  - the parallel first sign-in;
+  - the stuck-run expiry;
+  - the 500 with CORS headers;
+  - no open transactions after auth and during worker steps.
+- **Measurements:**
+  - **local embedding:** a MSFT 10-K took about 3.5 minutes on a laptop;
+  - **Gemini free tier:** 586 s;
+  - **Cohere:** MSFT 27 s, AAPL 29 s.
+- **Live smoke test:**
+  - deployed `/health` answers 200, `/history` without sign-in gives 401, and the security headers are present;
+  - CORS allows the Vercel origin and localhost and rejects other origins;
+  - the owner signed in on the Vercel site and ran AAPL (1 round) to a full result after the final deploy.
+- **Live problems found and fixed:** 7 of them, in DEVLOG.md (local) and D57/D58/D62/D63:
+  - CORS origins rejected;
+  - pasted whitespace in the Groq key;
+  - an invalid key shown as a CORS error;
+  - a run stuck on slow ingestion;
+  - Gemini quotas;
+  - idle-transaction timeouts on Neon;
+  - a test reading the developer's `.env`.
+
+### Known limitations carried forward
+- The free tier sleeps after 15 idle minutes and wipes its disk on every sleep and deploy; one run executes at a time.
+- MSFT's "Item 7" section gets the wrong text: a Stage 4 parsing bug, logged and not fixed yet.
+- Cohere trial key: about 1,000 calls a month, and filing text goes to a third party.
+
+### Next
+Stage 9 (extensions) starts only when the owner says "plan stage 9".
