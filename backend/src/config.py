@@ -16,14 +16,24 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 # Load backend/.env if it exists. Real environment variables take precedence.
 load_dotenv(BACKEND_DIR / ".env")
 
+def env_str(name: str, default: str | None = None) -> str | None:
+    """Read a setting with surrounding whitespace removed ("" counts as unset).
+
+    Values pasted into a hosting dashboard can carry an invisible trailing newline. In an API
+    key that makes the HTTP header invalid, and the SDK reports a confusing "Connection error".
+    """
+    value = os.getenv(name, "").strip()
+    return value or default
+
+
 # --- Environment ---
 # "production" makes the app refuse to start if a required setting is missing (see main.py).
-APP_ENV: str = os.getenv("APP_ENV", "development")
+APP_ENV: str = env_str("APP_ENV") or "development"
 IS_PRODUCTION: bool = APP_ENV == "production"
 
 # --- Secrets / deployment settings ---
-GROQ_API_KEY: str | None = os.getenv("GROQ_API_KEY")
-GOOGLE_CLIENT_ID: str | None = os.getenv("GOOGLE_CLIENT_ID")
+GROQ_API_KEY: str | None = env_str("GROQ_API_KEY")
+GOOGLE_CLIENT_ID: str | None = env_str("GOOGLE_CLIENT_ID")
 
 
 def parse_origins(value: str) -> list[str]:
@@ -52,7 +62,7 @@ def normalize_database_url(url: str) -> str:
 
 
 # Default to a local SQLite file inside backend/. In deployment this points to Postgres.
-DATABASE_URL: str = normalize_database_url(os.getenv("DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'app.db'}"))
+DATABASE_URL: str = normalize_database_url(env_str("DATABASE_URL") or f"sqlite:///{BACKEND_DIR / 'app.db'}")
 
 # --- Model names (Groq) ---
 # Groq retired its Llama chat models (see DECISIONS D11/D23); both are open-weight gpt-oss models.
@@ -61,7 +71,7 @@ REASONING_MODEL: str = "openai/gpt-oss-120b"   # larger model for analyst/critic
 
 # --- SEC filings / RAG (Stage 4) ---
 # SEC requires a User-Agent with a name and contact email on every EDGAR request.
-SEC_USER_AGENT: str | None = os.getenv("SEC_USER_AGENT")
+SEC_USER_AGENT: str | None = env_str("SEC_USER_AGENT")
 FILINGS_DIR = BACKEND_DIR / "data" / "filings"  # downloaded filings + manually added PDFs (gitignored)
 CHROMA_DIR = BACKEND_DIR / "chroma_db"           # persistent vector store (gitignored)
 TOP_K_CHUNKS: int = 8                            # filing excerpts given to the agents per run

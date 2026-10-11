@@ -151,3 +151,24 @@ def test_default_client_tries_four_times() -> None:
 def test_sdk_request_timeout_is_set() -> None:
     client = GroqClient(api_key="gsk_test_placeholder")
     assert client._sdk.timeout == 60.0  # not the SDK default of 10 minutes
+
+
+# ---------- Whitespace in a pasted key (found in the first deploy) ----------
+
+def test_api_key_whitespace_is_stripped() -> None:
+    client = GroqClient(api_key="  gsk_placeholder\n")
+    assert client._sdk.api_key == "gsk_placeholder"
+
+
+def test_whitespace_only_key_is_missing() -> None:
+    with pytest.raises(LLMConfigError):
+        GroqClient(api_key=" \n")
+
+
+def test_retry_log_names_cause_type_but_not_its_message(caplog: pytest.LogCaptureFixture) -> None:
+    error = groq.APIConnectionError(request=REQUEST)
+    error.__cause__ = httpx.LocalProtocolError("Illegal header value b'Bearer gsk_secret\\n'")
+    client, _, _ = make_client([error, SimpleNamespace(choices=[SimpleNamespace(message="ok")])])
+    client.chat([], model="m")
+    assert "cause: LocalProtocolError" in caplog.text
+    assert "gsk_secret" not in caplog.text

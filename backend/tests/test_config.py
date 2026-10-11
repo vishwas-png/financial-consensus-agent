@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from src.config import parse_origins, production_config_problems
+from src.config import env_str, parse_origins, production_config_problems
 from src.main import create_app
 from tests.api_helpers import auth_header, fake_verifier, memory_session_factory
 
@@ -96,3 +96,11 @@ def test_security_headers_on_every_response(client: TestClient, path: str) -> No
     assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["referrer-policy"] == "no-referrer"
     assert "default-src 'none'" in response.headers["content-security-policy"]
+
+
+def test_env_str_strips_pasted_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FCA_TEST_VALUE", "  gsk_placeholder\r\n")
+    assert env_str("FCA_TEST_VALUE") == "gsk_placeholder"
+    monkeypatch.setenv("FCA_TEST_VALUE", " \n")
+    assert env_str("FCA_TEST_VALUE") is None
+    assert env_str("FCA_TEST_VALUE", "fallback") == "fallback"

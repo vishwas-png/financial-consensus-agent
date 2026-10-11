@@ -88,6 +88,7 @@ class GroqClient:
         request_timeout: float = REQUEST_TIMEOUT_SECONDS,
     ) -> None:
         if sdk is None:
+            api_key = (api_key or "").strip()  # a stray newline would break the auth header
             if not api_key:
                 raise LLMConfigError("GROQ_API_KEY is not set. Add it to backend/.env.")
             # The SDK's default timeout is 10 minutes; a hung request would block a worker thread
@@ -137,9 +138,11 @@ class GroqClient:
                 retry_after = _retry_after_seconds(error)
                 if retry_after is not None:
                     delay = min(retry_after, MAX_RETRY_AFTER_SECONDS)
+                # Log only the cause's TYPE: its message can contain request headers (the API key)
+                cause = type(error.__cause__).__name__ if error.__cause__ else "none"
                 logger.warning(
-                    "Groq %s on attempt %d/%d; retrying in %.1fs",
-                    type(error).__name__, attempt, self.max_attempts, delay,
+                    "Groq %s (cause: %s) on attempt %d/%d; retrying in %.1fs",
+                    type(error).__name__, cause, attempt, self.max_attempts, delay,
                 )
                 self._sleep(delay)
 
