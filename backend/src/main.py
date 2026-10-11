@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 
 from src.api.auth import TokenVerifier, verify_google_token
 from src.api.jobs import RunWorker
-from src.api.middleware import SecurityHeadersMiddleware
+from src.api.middleware import SecurityHeadersMiddleware, UnhandledErrorMiddleware
 from src.api.routes_research import router as research_router
 from src.config import FRONTEND_ORIGINS, IS_PRODUCTION, production_config_problems
 from src.db.models import Base, mark_stale_runs_failed
@@ -84,6 +84,9 @@ def create_app(
     app.state.stream_poll_seconds = stream_poll_seconds
     app.state.stream_max_seconds = stream_max_seconds
 
+    # Middleware added FIRST runs INNERMOST. This one must sit inside CORS so even a crash
+    # returns a 500 with CORS headers (otherwise browsers report a misleading CORS error).
+    app.add_middleware(UnhandledErrorMiddleware)
     # Only our frontend(s) may call the API from a browser. No cookies are used (Bearer tokens).
     app.add_middleware(
         CORSMiddleware,

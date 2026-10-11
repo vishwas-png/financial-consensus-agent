@@ -111,7 +111,8 @@ class GroqClient:
         Raises:
             MalformedToolCallError: the model's tool call could not be parsed by Groq.
             LLMUnavailableError: temporary errors on every attempt.
-            groq.APIStatusError: non-retryable errors (bad request, auth) are re-raised as-is.
+            LLMConfigError: Groq rejected the API key (401/403); retrying won't help.
+            LLMError: any other non-retryable HTTP error (bad request, not found, ...).
         """
         request: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
         if tools is not None:
@@ -127,7 +128,12 @@ class GroqClient:
                 malformed = _tool_use_failed(error)
                 if malformed is not None:
                     raise malformed from error
-                raise  # other 400s are our bug; retrying won't help
+                raise LLMError(f"Groq rejected the request (HTTP 400): {error}") from error
+            except (groq.AuthenticationError, groq.PermissionDeniedError) as error:
+                # Our own error type, so the API answers with a handled 502 instead of a crash
+                raise LLMConfigError(
+                    f"Groq rejected the API key (HTTP {error.status_code}). Check GROQ_API_KEY."
+                ) from error
             except RETRYABLE_ERRORS as error:
                 if attempt == self.max_attempts:
                     raise LLMUnavailableError(
@@ -145,5 +151,7 @@ class GroqClient:
                     type(error).__name__, cause, attempt, self.max_attempts, delay,
                 )
                 self._sleep(delay)
+            except groq.APIStatusError as error:  # e.g. 404 unknown model (after the retryable ones)
+                raise LLMError(f"Groq HTTP {error.status_code}: {error}") from error
 
         raise AssertionError("unreachable")  # the loop always returns or raises
