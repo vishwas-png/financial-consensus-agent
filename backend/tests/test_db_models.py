@@ -15,6 +15,7 @@ from src.db.models import (
     RunStep,
     User,
     count_active_runs,
+    expire_overdue_runs,
     count_runs_since,
     get_events_for_run,
     get_run_for_user,
@@ -212,3 +213,25 @@ def test_history_limit(db: Session) -> None:
     for _ in range(5):
         add_run(db, "alice")
     assert len(get_runs_for_user(db, "alice", limit=3)) == 3
+
+
+def test_expire_overdue_runs_only_touches_this_users_old_active_runs(db: Session) -> None:
+    add_user(db, "alice")
+    add_user(db, "bob")
+    now = datetime.now(timezone.utc)
+    old_pending, old_running, old_done, fresh = (add_run(db, "alice") for _ in range(4))
+    bobs_old = add_run(db, "bob")
+    for run in (old_pending, old_running, old_done, bobs_old):
+        run.created_at = now - timedelta(minutes=30)
+    old_running.status = RunStatus.RUNNING
+    old_done.status = RunStatus.DONE
+    db.commit()
+
+    assert expire_overdue_runs(db, "alice", created_before=now - timedelta(minutes=15)) == 2
+    db.commit()
+    db.expire_all()
+    status = {run.id: db.get(ResearchRun, run.id).status for run in (old_pending, old_running, old_done, fresh, bobs_old)}  # type: ignore[union-attr]
+    assert status == {old_pending.id: RunStatus.FAILED, old_running.id: RunStatus.FAILED,
+                      old_done.id: RunStatus.DONE, fresh.id: RunStatus.PENDING, bobs_old.id: RunStatus.PENDING}
+    events = get_events_for_run(db, "alice", old_running.id)
+    assert [e.step for e in events] == [RunStep.ERROR] and "didn't finish in time" in events[0].content["message"]

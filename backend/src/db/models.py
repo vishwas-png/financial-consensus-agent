@@ -148,6 +148,26 @@ def count_active_runs(db: Session, user_id: str) -> int:
     return db.scalar(stmt) or 0
 
 
+def expire_overdue_runs(db: Session, user_id: str, created_before: datetime) -> int:
+    """Mark this user's runs that are still pending/running but were created before
+    `created_before` as failed. Caller commits.
+
+    A healthy run ends (done or failed) within RUN_TIMEOUT_SECONDS. One that is still
+    "active" much later is stuck: a step that never returned, or a worker thread that was
+    lost. Without this, it would block the user's active-run quota until the next restart.
+    """
+    overdue = list(db.scalars(select(ResearchRun).where(
+        ResearchRun.user_id == user_id,
+        ResearchRun.status.in_([RunStatus.PENDING, RunStatus.RUNNING]),
+        ResearchRun.created_at < created_before,
+    )))
+    for run in overdue:
+        run.status = RunStatus.FAILED
+        db.add(RunEvent(run_id=run.id, step=RunStep.ERROR,
+                        content={"message": "This run didn't finish in time and was stopped. Please start it again."}))
+    return len(overdue)
+
+
 # ---------- Maintenance (not user-facing) ----------
 
 def mark_stale_runs_failed(db: Session) -> int:

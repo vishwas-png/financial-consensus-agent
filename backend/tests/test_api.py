@@ -8,6 +8,7 @@ import json
 import os
 from collections.abc import Iterator
 from concurrent.futures import Executor, Future
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -16,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 
 from src.api.jobs import RunWorker
 from src.clients.groq_client import LLMUnavailableError
-from src.config import FRONTEND_ORIGIN
+from src.config import FRONTEND_ORIGIN, RUN_EXPIRY_SECONDS
 from src.core.structured_output import ToolCallError
 from src.db.models import ResearchRun, RunStatus, User
 from src.main import create_app
@@ -206,6 +207,24 @@ def test_active_run_blocks_second_request() -> None:
         second = start(pending_client, ALICE)
         assert second.status_code == 429 and "in progress" in second.json()["detail"]
         assert start(pending_client, BOB).status_code == 202  # other users unaffected
+
+
+def test_stuck_run_is_expired_instead_of_blocking_forever() -> None:
+    # Found live: a run stuck in a slow step kept the user at "1 run in progress" indefinitely
+    factory = memory_session_factory()
+    with build_client(executor=NeverRunsExecutor(), factory=factory) as pending_client:
+        stuck_id = start(pending_client, ALICE).json()["run_id"]
+        assert start(pending_client, ALICE).status_code == 429  # a fresh run still blocks
+
+        with factory() as db:  # age the stuck run past RUN_EXPIRY_SECONDS
+            run = db.get(ResearchRun, stuck_id)
+            run.created_at = datetime.now(timezone.utc) - timedelta(seconds=RUN_EXPIRY_SECONDS + 60)
+            db.commit()
+
+        assert pending_client.get("/me", headers=ALICE).json()["quota"]["active_runs"] == 0
+        assert start(pending_client, ALICE).status_code == 202
+        stuck = pending_client.get(f"/research/{stuck_id}", headers=ALICE).json()
+        assert stuck["status"] == "failed"
 
 
 def test_daily_limit_through_api(client: TestClient) -> None:

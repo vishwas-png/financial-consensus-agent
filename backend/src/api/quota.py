@@ -12,8 +12,8 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.config import MAX_ACTIVE_RUNS_PER_USER, RUNS_PER_DAY
-from src.db.models import User, count_active_runs, count_runs_since
+from src.config import MAX_ACTIVE_RUNS_PER_USER, RUN_EXPIRY_SECONDS, RUNS_PER_DAY
+from src.db.models import User, count_active_runs, count_runs_since, expire_overdue_runs
 
 QUOTA_WINDOW = timedelta(hours=24)
 
@@ -40,6 +40,20 @@ def check_quota(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Daily limit reached: {used}/{runs_per_day} research runs in the last 24 hours.",
         )
+
+
+def expire_stuck_runs(db: Session, user_id: str, now: datetime | None = None) -> int:
+    """Fail this user's runs that are far past the run timeout, then commit.
+
+    Called before the quota check (and when the UI loads the quota) so a stuck run can't
+    block the user's active-run limit forever. Kept out of check_quota on purpose:
+    check_quota also runs under the row lock, and committing there would release it.
+    """
+    now = now or datetime.now(timezone.utc)
+    expired = expire_overdue_runs(db, user_id, created_before=now - timedelta(seconds=RUN_EXPIRY_SECONDS))
+    if expired:
+        db.commit()
+    return expired
 
 
 def lock_user_for_quota(db: Session, user_id: str) -> None:

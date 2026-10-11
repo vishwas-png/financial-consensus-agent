@@ -87,6 +87,9 @@ MAX_ACTIVE_RUNS_PER_USER: int = 1    # pending/running runs a user may have at o
 MAX_CONCURRENT_RUNS: int = int(os.getenv("MAX_CONCURRENT_RUNS", "2"))
 MAX_USER_ITERATIONS: int = 3         # highest max_iterations a user may request
 RUN_TIMEOUT_SECONDS: int = 10 * 60   # a run still going after this is stopped (checked between steps)
+# A run still pending/running this long after creation is treated as dead (stuck step, lost
+# worker thread) and marked failed, so it can never block the user's active-run quota forever.
+RUN_EXPIRY_SECONDS: int = RUN_TIMEOUT_SECONDS + 5 * 60
 
 # --- Production checks ---
 REQUIRED_IN_PRODUCTION = ("GROQ_API_KEY", "GOOGLE_CLIENT_ID", "DATABASE_URL", "FRONTEND_ORIGIN", "SEC_USER_AGENT")
