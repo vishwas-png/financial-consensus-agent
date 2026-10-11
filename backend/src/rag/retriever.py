@@ -10,6 +10,7 @@ Usage (manual check):  python -m src.rag.retriever AAPL "supply chain risk"
 
 import logging
 import sys
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -114,12 +115,21 @@ class FilingStore:
 
 def ingest_latest_from_edgar(ticker: str, store: FilingStore, edgar: EdgarClient, form_type: str = "10-K") -> dict[str, Any]:
     """Download the latest filing from EDGAR, chunk it, and index it. Returns its metadata."""
+    # Each phase is timed: on a small hosted CPU, ingestion is by far the slowest step of a run
+    started = time.monotonic()
     ref = edgar.latest_filing(ticker, form_type)
     html = edgar.download(ref).read_text(encoding="utf-8", errors="replace")
     info = FilingInfo(ticker=ref.ticker, form_type=ref.form_type, fiscal_year=ref.fiscal_year,
                       filing_date=ref.filing_date, accession=ref.accession, source="edgar")
-    count = store.add_chunks(build_chunks(extract_text_from_html(html), info, store.embedder))
-    logger.info("Indexed %d chunks from %s %s (%s)", count, ticker, form_type, ref.accession)
+    downloaded = time.monotonic()
+    text = extract_text_from_html(html)
+    parsed = time.monotonic()
+    chunks = build_chunks(text, info, store.embedder)
+    chunked = time.monotonic()
+    count = store.add_chunks(chunks)
+    logger.info("Indexed %d chunks from %s %s (%s): download %.0fs, parse %.0fs, chunk %.0fs, embed+store %.0fs",
+                count, ticker, form_type, ref.accession, downloaded - started, parsed - downloaded,
+                chunked - parsed, time.monotonic() - chunked)
     return store.latest_filing(ticker, form_type) or {}
 
 
