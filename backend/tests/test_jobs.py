@@ -223,3 +223,31 @@ def test_run_expired_by_the_api_stays_failed(session_factory: sessionmaker) -> N
     assert run.status == RunStatus.FAILED and run.final_output is None
     assert steps_run == ["fetch_data"]  # stopped instead of making more LLM calls
     assert [e.step for e in events].count(RunStep.ERROR) == 1  # only the expiry message
+
+
+def test_worker_holds_no_transaction_open_during_a_step() -> None:
+    # A step can run for minutes; hosted Postgres kills connections idle inside a transaction
+    base = memory_session_factory()
+    with base() as db:
+        db.add(User(id="alice", email="alice@example.com"))
+        db.commit()
+    sessions: list[Any] = []
+
+    def recording_factory() -> Any:
+        session = base()
+        sessions.append(session)
+        return session
+
+    recording_factory.kw = base.kw  # type: ignore[attr-defined]
+    run_id = new_run(base)
+    open_during_steps: list[bool] = []
+
+    def graph(ticker: str, max_iterations: int = 3) -> Iterator[tuple[str, dict[str, Any]]]:
+        for node, update in fake_graph(ticker, max_iterations):
+            # This code runs while the worker waits for the step: no session may be mid-transaction
+            open_during_steps.append(any(s.in_transaction() for s in sessions))
+            yield node, update
+
+    RunWorker(recording_factory, run_graph=graph, executor=InlineExecutor()).submit(run_id, "AAPL", 1)  # type: ignore[arg-type]
+    assert load(base, run_id)[0].status == RunStatus.DONE
+    assert open_during_steps == [False] * 5

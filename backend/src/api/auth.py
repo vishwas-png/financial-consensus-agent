@@ -85,7 +85,12 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         ) from error
 
-    return get_or_create_user(db, identity)
+    user = get_or_create_user(db, identity)
+    # End the read transaction now. FastAPI keeps this session until the response finishes,
+    # which for the SSE stream is the whole run; hosted Postgres (Neon) kills connections left
+    # idle inside a transaction. Sessions keep loaded objects after commit (expire_on_commit=False).
+    db.commit()
+    return user
 
 
 def get_or_create_user(db: Session, identity: GoogleIdentity) -> User:

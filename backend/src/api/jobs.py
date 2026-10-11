@@ -171,7 +171,9 @@ class RunWorker:
                 db.commit()  # commit per step so the stream can show it immediately
                 if self._clock() > deadline:
                     raise RunTimeoutError(f"Run exceeded {self._run_timeout:.0f}s")
-                if db.scalar(select(ResearchRun.status).where(ResearchRun.id == run_id)) == RunStatus.FAILED:
+                expired = db.scalar(select(ResearchRun.status).where(ResearchRun.id == run_id)) == RunStatus.FAILED
+                db.commit()  # end that read transaction: the next step can run for minutes (see auth.py)
+                if expired:
                     # The API expired this run while a slow step was running; don't revive it
                     raise RunTimeoutError("Run was expired while a step was still running")
         finally:

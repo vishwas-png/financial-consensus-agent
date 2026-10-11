@@ -5,8 +5,10 @@ from typing import Any
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from src.api.auth import AuthError, GoogleIdentity, get_current_user, verify_google_token
+from src.api.deps import get_db
 from src.db.models import User
 from tests.api_helpers import auth_header, fake_verifier, memory_session_factory
 
@@ -170,3 +172,23 @@ def test_email_taken_by_another_account_is_a_clear_409() -> None:
         with pytest.raises(HTTPException) as excinfo:
             get_or_create_user(db, GoogleIdentity(sub="new-account", email="shared@example.com"))
     assert excinfo.value.status_code == 409
+
+
+def test_auth_leaves_no_transaction_open() -> None:
+    # Found live: the SSE stream kept the auth session in a transaction for the whole run,
+    # and Neon terminated it (IdleInTransactionSessionTimeout)
+    factory = memory_session_factory()
+    open_after_auth: list[bool] = []
+    app = FastAPI()
+    app.state.session_factory = factory
+    app.state.token_verifier = fake_verifier
+
+    @app.get("/whoami")
+    def whoami(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, str]:
+        open_after_auth.append(db.in_transaction())  # same cached session as get_current_user's
+        return {"id": user.id, "email": user.email}
+
+    client = TestClient(app)
+    assert client.get("/whoami", headers=auth_header("alice")).json()["email"] == "alice@example.com"
+    assert client.get("/whoami", headers=auth_header("alice")).status_code == 200  # existing user path too
+    assert open_after_auth == [False, False]
