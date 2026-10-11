@@ -331,3 +331,108 @@ Each entry: the choice, the alternatives considered, and the trade-off.
   - One small stylesheet with CSS variables, a dark-mode override and a reduced-motion rule is enough for 4 screens, and adds no build tooling.
   - The router gives each run a real URL (`/runs/:id`), so reloads, history links and sharing a run with yourself all work.
 - **Trade-off:** no ready-made component styling; the visual design is deliberately simple.
+
+## Stage 8: Deployment + hardening
+
+### D54. Neon + Render + Vercel, all on free tiers
+- **Alternatives:** Supabase (database); Railway or Fly.io (backend); Netlify (frontend).
+- **Why:**
+  - **Render** runs our Dockerfile from a `render.yaml` Blueprint, so the service is defined in code.
+  - **Neon** gives managed Postgres 17 near Render's Oregon region.
+  - **Vercel** builds the Vite app and applies the headers in `vercel.json`.
+  - All three sign in with GitHub and need no card.
+- **Trade-offs:**
+  - Render's free instance has 512 MB of RAM and about 0.1 CPU.
+  - It sleeps after 15 minutes idle; the first request after that waits about a minute.
+  - Its disk is wiped on every deploy and sleep, so the ChromaDB index and downloaded filings don't persist.
+  - The API therefore runs `MAX_CONCURRENT_RUNS=1`.
+
+### D55. Postgres schema only through Alembic migrations
+- **Alternatives:** keep `create_all` everywhere.
+- **Why:**
+  - `alembic upgrade head` runs before Uvicorn starts in the container, so the deployed schema is always the migrated one, and future column changes have a path.
+  - SQLite (local and tests) still uses `create_all`, for speed.
+  - CI runs the migrations up, down and up again on SQLite and Postgres, and checks that the models and migrations haven't drifted apart.
+- **Trade-off:** every model change now needs a migration file.
+
+### D56. Atomic quota: row lock on the user, then re-check
+- **Alternatives:** a unique partial index on active runs; Postgres advisory locks; accepting the race.
+- **Why:**
+  - `POST /research` checks the quota quickly before the slow LLM ticker extraction, then commits.
+  - It then locks the user row (`SELECT ... FOR UPDATE`), checks again, and inserts the run in the same transaction.
+  - Two simultaneous requests from the same user take turns; other users are never blocked.
+  - The Postgres CI test with `threading.Barrier` showed the race without the lock.
+- **Trade-off:** SQLite ignores `FOR UPDATE`. Local development keeps the (harmless) race.
+
+### D57. Production refuses to start when misconfigured
+- **Alternatives:** fail on the first request; warn in the logs.
+- **Why:**
+  - With `APP_ENV=production`, the app (and the migrations) stop at startup and list what's wrong:
+    - a missing setting;
+    - a SQLite `DATABASE_URL`;
+    - a malformed or `http://` origin;
+    - `EMBEDDING_PROVIDER=cohere` without a key.
+  - The messages name settings, never their values.
+  - Settings are trimmed of pasted whitespace (`env_str`).
+  - The allowed CORS origins are logged at startup (they're public URLs).
+  - Every one of these came from a live problem (see DEVLOG).
+- **Trade-off:** a typo stops a deploy instead of degrading quietly. That's intended; Render keeps the previous version serving.
+
+### D58. Time limits at every level
+- **Alternatives:** one overall timeout; killing threads.
+- **Why:** Python threads can't be killed safely, so each layer has its own bound:
+  - **Groq:** 60 s per request, up to 4 attempts.
+  - **Filing ingestion:** `fetch_data` waits at most 120 s, then continues without 10-K excerpts. The ingestion finishes in the background and is cached.
+  - **Run timeout:** 600 s, checked between steps.
+  - **Run expiry:** a run still active 15 minutes after creation is marked failed for that user. This happens before the quota check and on `/me`, so a stuck run can never block a user. The worker notices the expiry and stops.
+- **Trade-off:** a run can overrun by up to one step before it is stopped.
+
+### D59. Ticker extraction may decline (`no_us_listing`)
+- **Alternatives:** keep forcing a ticker and rely on "no market data".
+- **Why:** forcing a ticker made the model invent one (Reliance → `RIL`). The schema now allows `{"no_us_listing": true}`, which returns a clear 422 without a repair attempt or any quota use.
+- **Trade-off:** the model could decline a company that is listed. The live extraction evals still pass 4/4.
+
+### D60. Verify the Docker image in GitHub Actions
+- **Alternatives:** local Docker, which wasn't available because Docker Desktop's WSL VM was missing and BIOS virtualization couldn't be changed.
+- **Why:** CI builds the image and runs it the way production does:
+  - against a Postgres 17 service;
+  - as a non-root user;
+  - with migrations run at startup;
+  - checking `/health`, the 401 response and the security headers;
+  - checking that production refuses to start without secrets;
+  - running an in-container memory probe on a real ingestion path.
+  - Every job uses `shell: bash`, so `pipefail` is on.
+- **Trade-off:** each image check needs a push and costs about 5 minutes. Two checks that couldn't fail were found and fixed (DEVLOG).
+
+### D61. Embed in batches of 8 for memory
+- **Alternatives:** the library's internal batch of 32; a smaller model.
+- **Why:** measured peak memory by batch size: 8 → ~375 MB, 16 → ~440 MB, 32 → ~575 MB. The first 10-K ingestion had pushed a 512 MB instance over its limit (625 MB in CI).
+- **Trade-off:** about 30% slower local embedding. Quality is unchanged, because batching doesn't change the vectors.
+
+### D62. Hosted embeddings in production: Cohere (`embed-english-v3.0`)
+- **Alternatives:**
+  - the local model, which was measured too slow: about 3.5 minutes per 10-K on a laptop and an estimated 30+ minutes on Render's 0.1 CPU;
+  - Gemini's free tier, which was measured too slow: 586 s per 10-K, because every text counts against a 100/min quota;
+  - pre-indexing a few tickers into the image;
+  - only the 120 s fallback, which would mean almost no 10-K evidence on the deployed site.
+- **Why:**
+  - Cohere takes 96 texts per call (2,000/min), with separate document and query input types.
+  - Measured first-time ingestion: MSFT 27 s, AAPL 29 s.
+  - `EMBEDDING_PROVIDER=local` stays the default, so development, tests, CI and evals need no key.
+  - Each model gets its own Chroma collection, because the vector sizes differ (384 vs 1024).
+  - Embedding errors degrade to "no excerpts" instead of failing the run.
+- **Trade-offs:**
+  - filing text is sent to a third party;
+  - the trial key allows 1,000 calls a month, roughly 100 first-time 10-Ks;
+  - local and deployed retrieval use different models, so their results can differ slightly.
+
+### D63. Errors stay readable at the edges
+- **Alternatives:** rely on the framework defaults.
+- **Why:** three live failures came down to errors that were reported as something else:
+  1. **Groq rejecting the key:** a raw `groq.AuthenticationError` escaped every `except LLMError` and crashed the request.
+     - Now 401/403 become `LLMConfigError`, and other non-retryable statuses become `LLMError`, which the API answers with a handled 502.
+  2. **Crashes looked like CORS errors:** Starlette builds its 500 outside `CORSMiddleware`, so the browser reported a CORS failure instead of a server error.
+     - `UnhandledErrorMiddleware` now sits inside CORS and returns a JSON 500 that carries the CORS headers.
+  3. **Idle transactions:** a request session held a transaction open for a whole SSE stream, and Neon terminated it.
+     - Reads now commit as soon as they're done (`expire_on_commit=False` keeps objects usable).
+- **Trade-off:** more code at the boundaries. Each piece has a test that was shown to fail without it.
