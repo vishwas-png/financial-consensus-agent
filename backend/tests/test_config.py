@@ -104,3 +104,20 @@ def test_env_str_strips_pasted_whitespace(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("FCA_TEST_VALUE", " \n")
     assert env_str("FCA_TEST_VALUE") is None
     assert env_str("FCA_TEST_VALUE", "fallback") == "fallback"
+
+
+# ---------- A crash still returns a 500 the browser can read (found in the first deploy) ----------
+
+def test_unhandled_error_is_json_500_with_cors_headers() -> None:
+    def crashing_extractor(query: str) -> str:
+        raise RuntimeError("unexpected bug")  # stands in for e.g. an unwrapped SDK error
+
+    app = create_app(session_factory=memory_session_factory(), token_verifier=fake_verifier,
+                     ticker_extractor=crashing_extractor, frontend_origins=["https://fca.vercel.app"])
+    with TestClient(app) as client:
+        response = client.post("/research", json={"query": "AAPL"},
+                               headers=auth_header("alice") | {"Origin": "https://fca.vercel.app"})
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == "https://fca.vercel.app"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "unexpected bug" not in response.text  # no internal details leak
