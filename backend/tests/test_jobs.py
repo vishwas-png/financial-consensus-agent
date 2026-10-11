@@ -3,6 +3,7 @@
 import json
 from collections.abc import Iterator
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -13,7 +14,7 @@ from src.api.jobs import RunWorker, user_message
 from src.clients.groq_client import LLMUnavailableError
 from src.core.schemas import AnalystOutput, AuditorVerdict, CriticFeedback
 from src.core.structured_output import ToolCallError
-from src.db.models import ResearchRun, RunEvent, RunStatus, RunStep, User
+from src.db.models import ResearchRun, RunEvent, RunStatus, RunStep, User, expire_overdue_runs
 from src.tools.market_data import DataSourceError, TickerNotFoundError
 from tests.api_helpers import memory_session_factory
 
@@ -202,3 +203,23 @@ def test_run_within_timeout_is_unaffected(session_factory: sessionmaker) -> None
                        run_timeout_seconds=100, clock=FakeClock(step=1))
     worker.submit(run_id, "AAPL", 1)
     assert load(session_factory, run_id)[0].status == RunStatus.DONE
+
+
+def test_run_expired_by_the_api_stays_failed(session_factory: sessionmaker) -> None:
+    run_id = new_run(session_factory)
+    steps_run: list[str] = []
+
+    def graph_expired_midway(ticker: str, max_iterations: int = 3) -> Iterator[tuple[str, dict[str, Any]]]:
+        for node, update in fake_graph(ticker, max_iterations):
+            steps_run.append(node)
+            if node == "fetch_data":  # the API expires the run while this slow step runs
+                with session_factory() as db:
+                    expire_overdue_runs(db, "alice", created_before=datetime.now(timezone.utc) + timedelta(seconds=1))
+                    db.commit()
+            yield node, update
+
+    RunWorker(session_factory, run_graph=graph_expired_midway, executor=InlineExecutor()).submit(run_id, "AAPL", 1)
+    run, events = load(session_factory, run_id)
+    assert run.status == RunStatus.FAILED and run.final_output is None
+    assert steps_run == ["fetch_data"]  # stopped instead of making more LLM calls
+    assert [e.step for e in events].count(RunStep.ERROR) == 1  # only the expiry message

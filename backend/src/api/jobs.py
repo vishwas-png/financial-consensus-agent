@@ -19,6 +19,7 @@ from typing import Any
 
 from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.clients.groq_client import LLMError, LLMUnavailableError
@@ -144,6 +145,9 @@ class RunWorker:
             except Exception as error:  # the job must always end in a recorded state
                 logger.exception("Run %s (%s) failed after %.0fs", run_id, ticker, time.monotonic() - started)
                 db.rollback()
+                db.refresh(run)
+                if run.status == RunStatus.FAILED:
+                    return  # already expired by the API (see expire_stuck_runs); it has its error event
                 db.add(RunEvent(run_id=run_id, step=RunStep.ERROR,
                                 content={"message": user_message(error, ticker), "type": type(error).__name__}))
                 run.status = RunStatus.FAILED
@@ -152,9 +156,10 @@ class RunWorker:
     def _stream_and_save(self, db: Session, run_id: str, ticker: str, max_iterations: int) -> GraphState:
         """Save one event per graph step and rebuild the final state from the updates.
 
-        The deadline is checked between steps: a thread can't be killed mid-call, but every
-        single step is itself bounded (Groq request timeout x retry attempts), so a run ends
-        at most one step after RUN_TIMEOUT_SECONDS.
+        The deadline is checked between steps, because a thread can't be killed mid-call.
+        LLM steps are bounded (Groq request timeout x retry attempts), but fetch_data's filing
+        download + embedding is not, so a very slow step can overrun. expire_stuck_runs in the
+        API covers that case for the user; this loop then notices and stops at the next step.
         """
         deadline = self._clock() + self._run_timeout
         state = GraphState(ticker=ticker, max_iterations=max_iterations)
@@ -166,6 +171,9 @@ class RunWorker:
                 db.commit()  # commit per step so the stream can show it immediately
                 if self._clock() > deadline:
                     raise RunTimeoutError(f"Run exceeded {self._run_timeout:.0f}s")
+                if db.scalar(select(ResearchRun.status).where(ResearchRun.id == run_id)) == RunStatus.FAILED:
+                    # The API expired this run while a slow step was running; don't revive it
+                    raise RunTimeoutError("Run was expired while a step was still running")
         finally:
             close = getattr(steps, "close", None)
             if close is not None:

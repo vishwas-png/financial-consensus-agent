@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from src.api.auth import get_current_user
 from src.api.deps import get_db
-from src.api.quota import QUOTA_WINDOW, check_quota, lock_user_for_quota
+from src.api.quota import QUOTA_WINDOW, check_quota, expire_stuck_runs, lock_user_for_quota
 from src.clients.groq_client import LLMError, LLMUnavailableError
 from src.config import MAX_ACTIVE_RUNS_PER_USER, MAX_ITERATIONS, MAX_USER_ITERATIONS, RUNS_PER_DAY
 from src.core.structured_output import ToolCallError
@@ -97,6 +97,7 @@ def start_research(
     db: Session = Depends(get_db),
 ) -> RunCreated:
     """Check quota, identify the ticker, create the run and start it in the background."""
+    expire_stuck_runs(db, user.id)  # a stuck run must not block this user forever
     check_quota(db, user.id)  # fast fail BEFORE any LLM call
     db.commit()  # end this read transaction; don't keep it open during the slow LLM call
 
@@ -221,6 +222,7 @@ def history(user: User = Depends(get_current_user), db: Session = Depends(get_db
 @router.get("/me")
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     """Who is signed in, and how much quota is left."""
+    expire_stuck_runs(db, user.id)  # so the quota shown is accurate
     since = datetime.now(timezone.utc) - QUOTA_WINDOW
     return {
         "id": user.id,
