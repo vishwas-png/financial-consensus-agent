@@ -13,6 +13,7 @@ GOOD_ENV = {
     "DATABASE_URL": "postgresql://u:p@db.example.com/app",
     "FRONTEND_ORIGIN": "https://fca.vercel.app,http://localhost:5173",
     "SEC_USER_AGENT": "Jane Doe jane@example.com",
+    "EMBEDDING_PROVIDER": "local",  # set explicitly so a developer's backend/.env can't leak in
 }
 
 
@@ -35,10 +36,18 @@ def test_complete_production_config_has_no_problems() -> None:
     ({"FRONTEND_ORIGIN": "fca.vercel.app"}, "malformed origin"),
     ({"FRONTEND_ORIGIN": "https://fca.vercel.app/app"}, "malformed origin"),
     ({"FRONTEND_ORIGIN": "*"}, "malformed origin"),
+    ({"EMBEDDING_PROVIDER": "cohere"}, "COHERE_API_KEY is not set"),
+    ({"EMBEDDING_PROVIDER": "cohere", "COHERE_API_KEY": "  "}, "COHERE_API_KEY is not set"),
+    ({"EMBEDDING_PROVIDER": "openai"}, "must be 'local' or 'cohere'"),
 ])
 def test_production_problems_detected(change: dict[str, str], expected: str) -> None:
     problems = production_config_problems(GOOD_ENV | change)
     assert any(expected in problem for problem in problems), problems
+
+
+def test_cohere_provider_with_key_is_accepted() -> None:
+    env = GOOD_ENV | {"EMBEDDING_PROVIDER": "cohere", "COHERE_API_KEY": "placeholder"}
+    assert production_config_problems(env) == []
 
 
 @pytest.mark.parametrize("value", ["https://fca.vercel.app,http://localhost:5173",

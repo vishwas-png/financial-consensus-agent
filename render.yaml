@@ -15,6 +15,12 @@ services:
       # 512 MB free instance: one research run at a time (see DECISIONS)
       - key: MAX_CONCURRENT_RUNS
         value: "1"
+      # Embed filings with Cohere's API: the free instance's ~0.1 CPU is far too slow for
+      # the local model (a 10-K took 30+ minutes). See DECISIONS.
+      - key: EMBEDDING_PROVIDER
+        value: cohere
+      - key: COHERE_API_KEY
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GOOGLE_CLIENT_ID

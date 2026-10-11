@@ -31,3 +31,4 @@ requests==2.34.2
 # Stage 8: Postgres + migrations
 psycopg[binary]==3.3.6
 alembic==1.20.0
+httpx==0.28.1
