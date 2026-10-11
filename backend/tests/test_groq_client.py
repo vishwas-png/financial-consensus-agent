@@ -10,6 +10,7 @@ import pytest
 from src.clients.groq_client import (
     GroqClient,
     LLMConfigError,
+    LLMError,
     LLMUnavailableError,
     MalformedToolCallError,
 )
@@ -103,13 +104,17 @@ def test_gives_up_after_max_attempts() -> None:
 
 
 @pytest.mark.parametrize(
-    ("cls", "status"),
-    [(groq.BadRequestError, 400), (groq.AuthenticationError, 401), (groq.NotFoundError, 404)],
+    ("cls", "status", "expected"),
+    [(groq.BadRequestError, 400, LLMError), (groq.AuthenticationError, 401, LLMConfigError),
+     (groq.PermissionDeniedError, 403, LLMConfigError), (groq.NotFoundError, 404, LLMError)],
 )
-def test_non_retryable_errors_raised_immediately(cls: type[groq.APIStatusError], status: int) -> None:
+def test_non_retryable_errors_raised_immediately(cls: type[groq.APIStatusError], status: int,
+                                                 expected: type[LLMError]) -> None:
+    # Wrapped in our own types so callers (the API) can handle them; a raw SDK error was a 500
     client, sdk, sleeps = make_client([status_error(cls, status, body={"error": {"code": "other"}})])
-    with pytest.raises(cls):
+    with pytest.raises(expected) as excinfo:
         client.chat([], model="m")
+    assert isinstance(excinfo.value.__cause__, cls)
     assert len(sdk.requests) == 1
     assert sleeps == []
 
