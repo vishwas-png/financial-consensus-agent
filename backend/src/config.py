@@ -76,6 +76,16 @@ FILINGS_DIR = BACKEND_DIR / "data" / "filings"  # downloaded filings + manually 
 CHROMA_DIR = BACKEND_DIR / "chroma_db"           # persistent vector store (gitignored)
 TOP_K_CHUNKS: int = 8                            # filing excerpts given to the agents per run
 
+# Embeddings: "local" runs all-MiniLM-L6-v2 on this machine (dev, tests, CI). "cohere" calls
+# Cohere's embedding API: the deployed free instance has ~0.1 CPU, where embedding one 10-K
+# locally took 30+ minutes (~3.5 min on a laptop). Gemini's free tier was measured too slow
+# (100 texts/min: ~10 min per 10-K). See DECISIONS.
+EMBEDDING_PROVIDER: str = (env_str("EMBEDDING_PROVIDER") or "local").lower()
+COHERE_API_KEY: str | None = env_str("COHERE_API_KEY")
+COHERE_EMBEDDING_MODEL: str = "embed-english-v3.0"   # 1024-dim English retrieval model
+# Longest a run waits for filing ingestion before continuing without 10-K excerpts
+FILING_TIMEOUT_SECONDS: int = 120
+
 # --- Graph guardrail ---
 # Hard cap on Analyst <-> Critic rounds before the graph is forced to exit.
 MAX_ITERATIONS: int = 3
@@ -99,6 +109,11 @@ def production_config_problems(env: dict[str, str] | None = None) -> list[str]:
     """Names of missing/invalid settings for production. Never includes secret values."""
     env = dict(os.environ) if env is None else env
     problems = [f"{name} is not set" for name in REQUIRED_IN_PRODUCTION if not env.get(name, "").strip()]
+    provider = (env.get("EMBEDDING_PROVIDER", "").strip() or "local").lower()
+    if provider not in ("local", "cohere"):
+        problems.append(f"EMBEDDING_PROVIDER must be 'local' or 'cohere', not {provider!r}")
+    if provider == "cohere" and not env.get("COHERE_API_KEY", "").strip():
+        problems.append("COHERE_API_KEY is not set (required when EMBEDDING_PROVIDER=cohere)")
     database_url = env.get("DATABASE_URL", "")
     if database_url.startswith("sqlite"):
         problems.append("DATABASE_URL must point to Postgres in production (SQLite files are lost on redeploy)")

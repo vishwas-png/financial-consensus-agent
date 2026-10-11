@@ -208,3 +208,35 @@ def test_prompt_market_data_is_compact_and_downsampled() -> None:
     sampled = json.loads(text)["price_history"]
     assert sampled == history[::PRICE_HISTORY_STEP] + [history[-1]]  # last close always kept
     assert raw["price_history"] == history  # state data itself is not modified
+
+
+def test_fetch_data_does_not_wait_forever_for_slow_ingestion(caplog: pytest.LogCaptureFixture) -> None:
+    # Found live: first-time ingestion on a ~0.1 CPU host took 30+ minutes and the run hung
+    import threading
+    import time
+
+    release = threading.Event()
+
+    def slow(ticker: str) -> list[str]:
+        release.wait(5)  # stands in for a very slow ingestion
+        return CHUNKS
+
+    node = make_fetch_data_node(ticker_factory=lambda s: FakeTicker(), filing_retriever=slow, filing_timeout=0.2)
+    started = time.monotonic()
+    update = node(GraphState(ticker="AAPL"))
+    release.set()  # let the background ingestion finish
+    assert time.monotonic() - started < 2
+    assert update["filing_chunks"] == [] and update["raw_data"]["ticker"] == "AAPL"
+    assert "exceeded" in caplog.text
+
+
+def test_fetch_data_continues_when_embedding_service_fails(caplog: pytest.LogCaptureFixture) -> None:
+    from src.rag.embeddings import EmbeddingError
+
+    def failing(ticker: str) -> list[str]:
+        raise EmbeddingError("Cohere embeddings failed after 5 attempts (HTTP 429)")
+
+    node = make_fetch_data_node(ticker_factory=lambda s: FakeTicker(), filing_retriever=failing)
+    update = node(GraphState(ticker="AAPL"))
+    assert update["filing_chunks"] == []
+    assert "No SEC filing excerpts for AAPL" in caplog.text

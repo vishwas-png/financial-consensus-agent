@@ -18,7 +18,7 @@ import chromadb
 
 from src.config import CHROMA_DIR, TOP_K_CHUNKS
 from src.rag.edgar import EdgarClient
-from src.rag.embeddings import Embedder, LocalEmbedder
+from src.rag.embeddings import Embedder, collection_suffix, embed_query, make_embedder
 from src.rag.ingest import Chunk, FilingInfo, build_chunks, extract_text_from_html
 
 logger = logging.getLogger(__name__)
@@ -60,11 +60,11 @@ class FilingStore:
         collection_name: str = COLLECTION_NAME,
     ) -> None:
         self.client = client or chromadb.PersistentClient(path=str(CHROMA_DIR))
-        self.embedder = embedder or LocalEmbedder()
+        self.embedder = embedder or make_embedder()
         # Cosine distance suits sentence embeddings. We pass embeddings ourselves,
         # so Chroma's built-in embedding function is not used.
         self.collection = self.client.get_or_create_collection(
-            name=collection_name,
+            name=collection_name + collection_suffix(self.embedder),
             metadata={"hnsw:space": "cosine"},
             embedding_function=None,
         )
@@ -100,7 +100,7 @@ class FilingStore:
             {"section": {"$in": sections}},
         ]}
         result = self.collection.query(
-            query_embeddings=self.embedder.embed([text]),
+            query_embeddings=[embed_query(self.embedder, text)],
             n_results=n_results,
             where=where,
             include=["documents", "metadatas", "distances"],
