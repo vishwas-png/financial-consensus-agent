@@ -24,7 +24,8 @@ flowchart LR
     analyst --> critic
     critic --> consensus_check{consensus_check}
     consensus_check -- "continue<br/>(disagrees and rounds < max_iterations)" --> analyst
-    consensus_check -- "done<br/>(agrees OR rounds >= max_iterations)" --> auditor
+    consensus_check -- "done<br/>(agrees OR rounds >= max_iterations)" --> risk_officer
+    risk_officer --> auditor["auditor<br/>+ Data Checker (code)"]
     auditor --> END((end))
 ```
 
@@ -35,9 +36,10 @@ flowchart LR
   - After each critic step, the `consensus_check` node increments `iteration_count` and sets `forced_exit=True` if the cap is reached while the Critic still disagrees.
   - The router then returns `"done"` if `critic_feedback.agrees` is true, **or** if `iteration_count >= max_iterations`; otherwise `"continue"` (back to `analyst`).
   - Split into node + router because LangGraph routing functions cannot update state.
-  - Backstop: `recursion_limit = 1 + 3 x max_iterations + 1` steps, so even a broken router cannot loop beyond about one extra round.
+  - Backstop: `recursion_limit = 3 + 3 x max_iterations + 1` steps (fetch_data, risk_officer and auditor outside the loop), so even a broken router cannot loop beyond about one extra round.
   - A forced exit still goes to the Auditor and is flagged as **unresolved disagreement**, so the UI and stored result never present a forced exit as consensus.
-- `auditor` (LLM-as-a-Judge): runs after every debate, consensus or forced exit. It sees the final `AnalystOutput` and the same evidence the agents had, but **not** the critic's feedback, so its verdict is independent. It produces an `AuditorVerdict` (is_grounded, unsupported_claims, notes). A verdict whose `is_grounded` contradicts its `unsupported_claims` list gets one repair attempt.
+- `risk_officer` (Stage 9): runs once after the debate. It sees the evidence, the final analysis and how the debate ended (unresolved objections included), and produces a `RiskAssessment`: 1-5 risks with severity and a validated excerpt citation (or null for market-data risks), the conditions that would change the thesis, and the overall risk.
+- `auditor` (LLM-as-a-Judge): runs after every debate, consensus or forced exit. It sees the final `AnalystOutput` and the same evidence the agents had, but **not** the critic's feedback, so its verdict is independent. It produces an `AuditorVerdict` (is_grounded, unsupported_claims, notes). A verdict whose `is_grounded` contradicts its `unsupported_claims` list gets one repair attempt. The same step runs the **Data Checker** (code, no LLM): each analyst `field = value` data point is looked up in the market data and marked match / mismatch / unknown field / not checkable. It is shown next to the verdict, not given to the Auditor (D66).
 
 Why a hard cap: two LLMs can disagree forever. Without a cap, cost and latency are unbounded and a run might never finish.
 
@@ -307,3 +309,33 @@ flowchart LR
   - the service sleeps after 15 minutes idle (the first request after that takes about a minute);
   - ChromaDB and downloaded filings are lost on every sleep and deploy, so a ticker's first run after a wake-up re-indexes its 10-K;
   - one research run executes at a time.
+
+## 14. Extensions (Stage 9)
+
+### Observability
+- **Collector:** the worker opens a `RunMetrics` collector per run (`observability.run_context`, a context variable). `GroqClient` reports calls, retries and token usage; the embedders report calls; first-time 10-K ingestion reports its phase timings; the worker records each step's duration.
+- **Threads:** LangGraph's node threads and the ingestion thread (`copy_context()`) report to the same collector.
+- **Where it goes:**
+  - stored in `research_runs.metrics`;
+  - returned by `GET /research/{id}`;
+  - shown in a collapsible **Run details** panel;
+  - log lines written during a run carry ` [run=<id8>]`.
+- **Missing 10-K:** `fetch_data` reports `filing_status` (`found` / `empty` / `unavailable` / `timeout`), and the UI explains when a run had no 10-K text.
+
+### Multi-ticker comparison
+
+```mermaid
+flowchart LR
+    Q["POST /compare<br/>'Apple vs Microsoft'"] --> X[extract_tickers<br/>2-3 tickers or no_us_listing]
+    X --> A1[AAPL: full graph<br/>1 round]
+    A1 --> A2[MSFT: full graph<br/>1 round]
+    A2 --> C[comparator<br/>ComparisonOutput]
+    C --> R[(one run row<br/>kind=compare, units=N)]
+```
+
+- **Core:** `core/comparison.stream_comparison` runs the normal graph for each ticker in turn and yields `(ticker, node, update)`, then one Comparator call over compact briefs (no price history, only cited excerpts of up to 400 characters). Checks: `per_ticker` in the given order, `preferred` among the tickers or null, citations among the shown ids.
+- **API:** one `research_runs` row with `kind="compare"`, `tickers`, `units=N` and the label "AAPL vs MSFT".
+  - The quota sums units, checked before extraction (minimum 2) and again under the row lock.
+  - The run timeout and stuck-run expiry scale with N.
+- **Events:** each per-company event carries `content.ticker`. The final output holds `per_ticker` results, the `comparison` and all excerpts.
+- **UI:** `compareReducer` sends each company's events through the normal `runReducer`. The run page shows a Comparison card (marked as not fact-checked) above one tab per company, with a single activity line.

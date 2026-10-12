@@ -4,6 +4,9 @@ Usage (from backend/):
     python -m evals.run_evals --suite extraction     # ~1 min
     python -m evals.run_evals --suite judge          # ~7 min on Groq free tier
     python -m evals.run_evals --suite pipeline       # ~15 min (full live debates)
+    python -m evals.run_evals --suite data_check     # instant, no LLM (Stage 9)
+    python -m evals.run_evals --suite risk           # ~2 min (Stage 9 Risk Officer)
+    python -m evals.run_evals --suite compare_extraction   # ~30 s (Stage 9)
     python -m evals.run_evals --suite all
 
 Prints a summary table and writes full results to evals/results/run_<timestamp>.json (gitignored).
@@ -19,18 +22,24 @@ from typing import Any
 from evals.golden import EVALS_DIR, GoldenSet, load_golden_set
 from evals.metrics import claim_recall, confusion, fmt
 from evals.runner import (
+    CompareExtractionResult,
+    DataCheckResult,
     ExtractionResult,
     JudgeResult,
     PipelineResult,
+    RiskResult,
+    run_compare_extraction_case,
+    run_data_check_case,
     run_extraction_case,
     run_judge_case,
     run_pipeline_case,
+    run_risk_case,
     to_dict,
 )
 from src.clients.groq_client import GroqClient
 
 RESULTS_DIR = EVALS_DIR / "results"
-SUITES = ("extraction", "judge", "pipeline")
+SUITES = ("extraction", "judge", "pipeline", "data_check", "risk", "compare_extraction")
 
 
 def run_extraction_suite(golden: GoldenSet, client: GroqClient, **kwargs: Any) -> list[ExtractionResult]:
@@ -66,10 +75,51 @@ def run_pipeline_suite(golden: GoldenSet, client: GroqClient, **kwargs: Any) -> 
     return results
 
 
+def run_data_check_suite(golden: GoldenSet) -> list[DataCheckResult]:
+    results = []
+    for case in golden.data_check_cases:
+        result = run_data_check_case(case)
+        print(f"  [{'PASS' if result.passed else 'FAIL'}] {case.id}: expected={result.expected} got={result.got}",
+              flush=True)
+        results.append(result)
+    return results
+
+
+def run_compare_extraction_suite(golden: GoldenSet, client: GroqClient) -> list[CompareExtractionResult]:
+    results = []
+    for case in golden.compare_extraction_cases:
+        result = run_compare_extraction_case(case, client)
+        print(f"  [{'PASS' if result.passed else 'FAIL'}] {case.id}: expected={case.expected_tickers} "
+              f"got={result.got} {('(' + result.error[:80] + ')') if result.error else ''}", flush=True)
+        results.append(result)
+    return results
+
+
+def run_risk_suite(golden: GoldenSet, client: GroqClient) -> list[RiskResult]:
+    results = []
+    for case in golden.risk_cases:
+        result = run_risk_case(case, golden.judge_case(case.analysis_from).analysis, client)
+        failed = [name for name, ok in result.checks.items() if not ok]
+        print(f"  [{'PASS' if result.passed else 'FAIL'}] {case.id}: overall_risk={result.overall_risk} "
+              f"risks={len(result.risks)} failed_checks={failed} {result.error or ''}", flush=True)
+        results.append(result)
+    return results
+
+
 def summarize(extraction: list[ExtractionResult], judge: list[JudgeResult],
-              pipeline: list[PipelineResult]) -> dict[str, Any]:
+              pipeline: list[PipelineResult], data_check: list[DataCheckResult] | None = None,
+              risk: list[RiskResult] | None = None,
+              compare_extraction: list[CompareExtractionResult] | None = None) -> dict[str, Any]:
     """Headline numbers per suite."""
     summary: dict[str, Any] = {}
+    if compare_extraction:
+        summary["compare_extraction"] = {"passed": sum(r.passed for r in compare_extraction),
+                                         "total": len(compare_extraction)}
+    if data_check:
+        summary["data_check"] = {"passed": sum(r.passed for r in data_check), "total": len(data_check)}
+    if risk:
+        summary["risk"] = {"passed": sum(r.passed for r in risk), "total": len(risk),
+                           "errors": sum(r.error is not None for r in risk)}
     if extraction:
         summary["extraction"] = {"passed": sum(r.passed for r in extraction), "total": len(extraction)}
     if judge:
@@ -103,6 +153,15 @@ def print_summary(summary: dict[str, Any]) -> None:
         s = summary["judge"]
         print(f"judge      : {s['correct']}/{s['total']} correct ({s['errors']} errors) | precision {fmt(s['precision'])} "
               f"recall {fmt(s['recall'])} accuracy {fmt(s['accuracy'])} claim_recall {fmt(s['claim_recall'])}")
+    if "compare_extraction" in summary:
+        s = summary["compare_extraction"]
+        print(f"compare    : {s['passed']}/{s['total']} comparison requests extracted correctly")
+    if "data_check" in summary:
+        s = summary["data_check"]
+        print(f"data_check : {s['passed']}/{s['total']} agree with the manual labels")
+    if "risk" in summary:
+        s = summary["risk"]
+        print(f"risk       : {s['passed']}/{s['total']} passed all checks ({s['errors']} errors)")
     if "pipeline" in summary:
         s = summary["pipeline"]
         print(f"pipeline   : {s['passed']}/{s['total']} passed all checks | auditor grounded rate "
@@ -126,7 +185,16 @@ def main(argv: list[str] | None = None) -> int:
 
     golden, client = load_golden_set(), GroqClient()
     selected = SUITES if args.suite == "all" else (args.suite,)
-    results: dict[str, list[Any]] = {"extraction": [], "judge": [], "pipeline": []}
+    results: dict[str, list[Any]] = {suite: [] for suite in SUITES}
+    if "data_check" in selected:
+        print("--- data_check ---", flush=True)
+        results["data_check"] = run_data_check_suite(golden)
+    if "risk" in selected:
+        print("--- risk ---", flush=True)
+        results["risk"] = run_risk_suite(golden, client)
+    if "compare_extraction" in selected:
+        print("--- compare_extraction ---", flush=True)
+        results["compare_extraction"] = run_compare_extraction_suite(golden, client)
     if "extraction" in selected:
         print("--- extraction ---", flush=True)
         results["extraction"] = run_extraction_suite(golden, client)
@@ -137,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
         print("--- pipeline ---", flush=True)
         results["pipeline"] = run_pipeline_suite(golden, client)
 
-    summary = summarize(results["extraction"], results["judge"], results["pipeline"])
+    summary = summarize(results["extraction"], results["judge"], results["pipeline"],
+                        results["data_check"], results["risk"], results["compare_extraction"])
     print_summary(summary)
     print(f"\nFull results: {save_results(summary, results)}")
     return 0

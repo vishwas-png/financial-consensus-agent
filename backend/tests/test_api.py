@@ -19,12 +19,21 @@ from src.api.jobs import RunWorker
 from src.clients.groq_client import LLMUnavailableError
 from src.config import FRONTEND_ORIGIN, RUN_EXPIRY_SECONDS
 from src.core.structured_output import ToolCallError
+from src.core.tool_calling import NoUSListingError
 from src.db.models import ResearchRun, RunStatus, User
 from src.main import create_app
 from tests.api_helpers import auth_header, fake_verifier, memory_session_factory
-from tests.test_jobs import InlineExecutor, fake_graph
+from tests.test_jobs import InlineExecutor, fake_comparison, fake_graph
 
 ALICE, BOB = auth_header("alice"), auth_header("bob")
+
+
+def fake_tickers_extractor(query: str) -> list[str]:
+    if "Reliance" in query:
+        raise NoUSListingError("foreign")
+    if "unclear" in query:
+        raise ToolCallError("only one ticker")
+    return ["AAPL", "MSFT", "NVDA"] if "three" in query else ["AAPL", "MSFT"]
 
 
 def fake_extractor(query: str) -> str:
@@ -45,9 +54,10 @@ class NeverRunsExecutor(Executor):
 def build_client(executor: Any = None, graph: Any = fake_graph, factory: sessionmaker | None = None,
                  **app_kwargs: Any) -> TestClient:
     factory = factory or memory_session_factory()
-    worker = RunWorker(factory, run_graph=graph, executor=executor or InlineExecutor())
+    worker = RunWorker(factory, run_graph=graph, executor=executor or InlineExecutor(), run_comparison=fake_comparison)
     app = create_app(session_factory=factory, token_verifier=fake_verifier, worker=worker,
-                     ticker_extractor=fake_extractor, stream_poll_seconds=0.01, **app_kwargs)
+                     ticker_extractor=fake_extractor, tickers_extractor=fake_tickers_extractor,
+                     stream_poll_seconds=0.01, **app_kwargs)
     return TestClient(app)
 
 
@@ -380,3 +390,77 @@ def test_company_without_us_listing_is_a_clear_422() -> None:
         assert response.status_code == 422
         assert "doesn't appear to have a US stock listing" in response.json()["detail"]
         assert client.get("/history", headers=ALICE).json() == []  # no run, no quota used
+
+
+def test_run_detail_includes_metrics(client: TestClient) -> None:
+    run_id = start(client, ALICE).json()["run_id"]
+    detail = client.get(f"/research/{run_id}", headers=ALICE).json()
+    assert [step["step"] for step in detail["metrics"]["steps"]][0] == "fetch_data"
+    assert set(detail["metrics"]) >= {"llm_calls", "prompt_tokens", "completion_tokens", "steps", "total_seconds"}
+
+
+
+# ---------- Stage 9: POST /compare ----------
+
+def compare(client: TestClient, headers: dict[str, str], query: str = "Apple vs Microsoft") -> Any:
+    return client.post("/compare", json={"query": query}, headers=headers)
+
+
+def test_compare_runs_and_streams_tagged_steps(client: TestClient) -> None:
+    created = compare(client, ALICE)
+    assert created.status_code == 202
+    assert created.json()["ticker"] == "AAPL vs MSFT"
+    run_id = created.json()["run_id"]
+
+    detail = client.get(f"/research/{run_id}", headers=ALICE).json()
+    assert detail["kind"] == "compare" and detail["tickers"] == ["AAPL", "MSFT"] and detail["status"] == "done"
+    events = parse_sse(client.get(f"/research/{run_id}/stream", headers=ALICE).text)
+    assert events[0]["data"]["content"]["ticker"] == "AAPL"
+    assert [e["event"] for e in events][-2:] == ["comparator", "end"]
+
+    summary = client.get("/history", headers=ALICE).json()[0]
+    assert summary["kind"] == "compare" and summary["outcome"] == "prefers MSFT"
+
+
+def test_compare_costs_one_unit_per_ticker(client: TestClient) -> None:
+    compare(client, ALICE, "three companies")
+    assert client.get("/me", headers=ALICE).json()["quota"]["runs_last_24h"] == 3
+    compare(client, ALICE)                                   # 3 + 2 = 5 = the daily limit
+    third = compare(client, ALICE)
+    assert third.status_code == 429 and "This comparison needs 2" in third.json()["detail"]
+    assert start(client, ALICE).status_code == 429           # a single run is over the limit too
+
+
+def test_compare_needing_more_units_than_left_is_rejected(client: TestClient) -> None:
+    for _ in range(3):
+        assert start(client, ALICE).status_code == 202       # 3 used, 2 left
+    assert compare(client, ALICE).status_code == 202          # 2 tickers fit exactly
+    assert client.get("/me", headers=ALICE).json()["quota"]["runs_last_24h"] == 5
+
+
+def test_three_tickers_rejected_when_only_two_units_left(client: TestClient) -> None:
+    for _ in range(3):
+        start(client, ALICE)
+    response = compare(client, ALICE, "three companies")
+    assert response.status_code == 429 and "needs 3" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(("query", "message"), [
+    ("Apple vs Reliance", "US stock listing"),
+    ("something unclear", "2 to 3 different US-listed companies"),
+])
+def test_compare_extraction_failures_are_422_and_free(client: TestClient, query: str, message: str) -> None:
+    response = compare(client, ALICE, query)
+    assert response.status_code == 422 and message in response.json()["detail"]
+    assert client.get("/me", headers=ALICE).json()["quota"]["runs_last_24h"] == 0
+
+
+def test_compare_requires_auth_and_valid_body(client: TestClient) -> None:
+    assert client.post("/compare", json={"query": "Apple vs Microsoft"}).status_code == 401
+    assert client.post("/compare", json={"query": ""}, headers=ALICE).status_code == 422
+    assert client.post("/compare", json={"query": "x", "max_iterations": 2}, headers=ALICE).status_code == 422
+
+
+def test_other_users_cannot_see_a_comparison(client: TestClient) -> None:
+    run_id = compare(client, ALICE).json()["run_id"]
+    assert client.get(f"/research/{run_id}", headers=BOB).status_code == 404

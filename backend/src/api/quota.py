@@ -24,8 +24,12 @@ def check_quota(
     now: datetime | None = None,
     runs_per_day: int = RUNS_PER_DAY,
     max_active: int = MAX_ACTIVE_RUNS_PER_USER,
+    units: int = 1,
 ) -> None:
-    """Raise HTTP 429 if this user may not start another run right now."""
+    """Raise HTTP 429 if this user may not start a run costing `units` right now.
+
+    A single run costs 1 unit; a comparison costs one per ticker (Stage 9).
+    """
     now = now or datetime.now(timezone.utc)
 
     if count_active_runs(db, user_id) >= max_active:
@@ -35,10 +39,11 @@ def check_quota(
         )
 
     used = count_runs_since(db, user_id, now - QUOTA_WINDOW)
-    if used >= runs_per_day:
+    if used + units > runs_per_day:
+        needs = f" This comparison needs {units}." if units > 1 else ""
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Daily limit reached: {used}/{runs_per_day} research runs in the last 24 hours.",
+            detail=f"Daily limit reached: {used}/{runs_per_day} research runs in the last 24 hours.{needs}",
         )
 
 
@@ -50,7 +55,7 @@ def expire_stuck_runs(db: Session, user_id: str, now: datetime | None = None) ->
     check_quota also runs under the row lock, and committing there would release it.
     """
     now = now or datetime.now(timezone.utc)
-    expired = expire_overdue_runs(db, user_id, created_before=now - timedelta(seconds=RUN_EXPIRY_SECONDS))
+    expired = expire_overdue_runs(db, user_id, now=now, max_age_seconds=RUN_EXPIRY_SECONDS)
     if expired:
         db.commit()
     return expired

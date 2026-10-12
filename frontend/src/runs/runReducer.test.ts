@@ -15,12 +15,16 @@ describe('runReducer', () => {
     expect(state.rounds[1].result).toEqual({ forcedExit: true })
     expect(state.forcedExit).toBe(true)
     expect(state.auditor?.is_grounded).toBe(false)
+    expect(state.risk?.overall_risk).toBe('medium')
+    expect(state.dataCheck?.mismatched).toBe(1)
     expect(state.finished).toBe('done')
     expect(debateOutcome(state)).toEqual({ kind: 'unresolved', rounds: 2 })
   })
 
-  it('recognises consensus', () => {
+  it('recognises consensus (and runs from before Stage 9 have no risk or data check)', () => {
     const state = apply(CONSENSUS_EVENTS)
+    expect(state.risk).toBeUndefined()
+    expect(state.dataCheck).toBeUndefined()
     expect(state.rounds).toHaveLength(1)
     expect(state.rounds[0].critic).toEqual(AGREES)
     expect(debateOutcome(state)).toEqual({ kind: 'consensus', rounds: 1 })
@@ -61,7 +65,8 @@ describe('currentActivity', () => {
     [2, 'Critic is reviewing round 1'],
     [3, 'Checking for consensus after round 1'],
     [4, 'Analyst is revising (round 2)'],
-    [7, 'Auditor is checking every claim'],
+    [7, 'Risk Officer is weighing'],
+    [8, 'Auditor is checking every claim'],
   ])('after %i events says "%s"', (count, expected) => {
     expect(currentActivity(apply(FORCED_EXIT_EVENTS.slice(0, count)))).toContain(expected)
   })

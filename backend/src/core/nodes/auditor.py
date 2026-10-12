@@ -3,6 +3,8 @@
 Runs after every debate, whether it ended in consensus or a forced exit. It sees the
 final AnalystOutput and the same evidence the agents had, but NOT the critic's
 feedback, so its verdict is an independent check rather than a third debate voice.
+
+The same step runs the Data Checker (code, no LLM) on the analyst's data points (Stage 9).
 """
 
 from collections.abc import Callable
@@ -10,6 +12,7 @@ from typing import Any
 
 from src.clients.groq_client import GroqClient
 from src.config import REASONING_MODEL
+from src.core.data_checker import check_data_points
 from src.core.nodes.context import evidence_block
 from src.core.prompts import AUDITOR_PROMPT
 from src.core.schemas import AuditorVerdict
@@ -56,6 +59,8 @@ def make_auditor_node(client: GroqClient) -> Callable[[GraphState], dict[str, An
             model=REASONING_MODEL,
             extra_check=check_verdict_consistency,
         )
-        return {"auditor_verdict": verdict}
+        # Deterministic second opinion on the numbers, shown next to the verdict (not fed to the LLM)
+        data_check = check_data_points(state.analyst_output, state.raw_data) if state.analyst_output else None
+        return {"auditor_verdict": verdict, "data_check": data_check}
 
     return auditor

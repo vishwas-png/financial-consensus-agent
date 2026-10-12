@@ -4,6 +4,7 @@ import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
+from contextvars import copy_context
 from typing import Any
 
 import yfinance as yf
@@ -45,17 +46,19 @@ def make_fetch_data_node(
         # Filings are optional: some tickers (ETFs, foreign issuers) have no 10-K, and EDGAR
         # can be down. The debate still runs on market data; the agents are told no filing exists.
         # Also bounded in time: a run must never hang on ingestion (it did, live, on a slow CPU).
-        future = _ingest_pool.submit(filing_retriever, state.ticker)
+        # copy_context(): the ingestion thread reports to this run's metrics and log tag
+        future = _ingest_pool.submit(copy_context().run, filing_retriever, state.ticker)
         try:
             filing_chunks = future.result(timeout=filing_timeout)
+            filing_status = "found" if filing_chunks else "empty"
         except FutureTimeout:
             logger.warning("Filing ingestion for %s exceeded %.0fs; continuing without excerpts",
                            state.ticker, filing_timeout)
-            filing_chunks = []
+            filing_chunks, filing_status = [], "timeout"
         except (FilingError, EmbeddingError) as error:
             logger.warning("No SEC filing excerpts for %s: %s", state.ticker, error)
-            filing_chunks = []
+            filing_chunks, filing_status = [], "unavailable"
 
-        return {"raw_data": raw_data, "filing_chunks": filing_chunks}
+        return {"raw_data": raw_data, "filing_chunks": filing_chunks, "filing_status": filing_status}
 
     return fetch_data

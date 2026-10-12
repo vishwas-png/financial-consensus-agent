@@ -5,10 +5,14 @@ import type { Me } from '../api/types'
 import { useApi } from '../api/useApi'
 
 const EXAMPLES = ['How is Apple doing?', 'Give me a read on Microsoft', 'NVDA', 'Berkshire Hathaway class B']
+const COMPARE_EXAMPLES = ['Apple vs Microsoft', 'NVDA vs AMD', 'Coca-Cola vs PepsiCo', 'Visa, Mastercard and PayPal']
+
+type Mode = 'single' | 'compare'
 
 export function NewResearchPage() {
   const api = useApi()
   const navigate = useNavigate()
+  const [mode, setMode] = useState<Mode>('single')
   const [query, setQuery] = useState('')
   const [rounds, setRounds] = useState(2) // fewer rounds = faster on the Groq free tier
   const [submitting, setSubmitting] = useState(false)
@@ -25,7 +29,8 @@ export function NewResearchPage() {
     setSubmitting(true)
     setError(null)
     try {
-      const created = await api.startResearch(query.trim(), rounds)
+      const created =
+        mode === 'compare' ? await api.startComparison(query.trim()) : await api.startResearch(query.trim(), rounds)
       navigate(`/runs/${created.run_id}`)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not reach the server. Is the backend running?')
@@ -36,31 +41,57 @@ export function NewResearchPage() {
   return (
     <main>
       <h1>New research</h1>
+      <div className="tabs" role="tablist" aria-label="Research type">
+        {(['single', 'compare'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={mode === value}
+            className={`tab${mode === value ? ' tab-active' : ''}`}
+            onClick={() => {
+              setMode(value)
+              setError(null)
+            }}
+          >
+            {value === 'single' ? 'One company' : 'Compare companies'}
+          </button>
+        ))}
+      </div>
       <form className="research-form" onSubmit={submit}>
-        <label htmlFor="query">Company or question</label>
+        <label htmlFor="query">{mode === 'compare' ? 'Companies to compare (2 or 3)' : 'Company or question'}</label>
         <input
           id="query"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="e.g. How is Apple doing?"
+          placeholder={mode === 'compare' ? 'e.g. Apple vs Microsoft' : 'e.g. How is Apple doing?'}
           maxLength={200}
           autoFocus
         />
         <div className="examples">
-          {EXAMPLES.map((example) => (
+          {(mode === 'compare' ? COMPARE_EXAMPLES : EXAMPLES).map((example) => (
             <button key={example} type="button" className="chip" onClick={() => setQuery(example)}>
               {example}
             </button>
           ))}
         </div>
-        <label htmlFor="rounds">Maximum debate rounds</label>
-        <select id="rounds" value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
-          <option value={1}>1 (fastest)</option>
-          <option value={2}>2</option>
-          <option value={3}>3 (most thorough)</option>
-        </select>
+        {mode === 'single' ? (
+          <>
+            <label htmlFor="rounds">Maximum debate rounds</label>
+            <select id="rounds" value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
+              <option value={1}>1 (fastest)</option>
+              <option value={2}>2</option>
+              <option value={3}>3 (most thorough)</option>
+            </select>
+          </>
+        ) : (
+          <p className="muted">
+            Each company gets one debate round, then a Comparator weighs them side by side. Uses one daily run per
+            company and takes about 3–4 minutes per company.
+          </p>
+        )}
         <button type="submit" className="primary" disabled={submitting || !query.trim()}>
-          {submitting ? 'Starting…' : 'Start research'}
+          {submitting ? 'Starting…' : mode === 'compare' ? 'Start comparison' : 'Start research'}
         </button>
         {error && (
           <p className="error" role="alert">

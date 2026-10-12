@@ -4,7 +4,16 @@
 // A pure function, so live streaming, a reconnect, and replaying a finished run all go
 // through the same code and produce the same screen.
 
-import type { AnalystOutput, AuditorVerdict, CriticFeedback, FetchDataContent, RunEvent, StreamEnd } from '../api/types'
+import type {
+  AnalystOutput,
+  AuditorVerdict,
+  CriticFeedback,
+  DataCheck,
+  FetchDataContent,
+  RiskAssessment,
+  RunEvent,
+  StreamEnd,
+} from '../api/types'
 
 export interface Round {
   number: number
@@ -17,7 +26,9 @@ export interface Round {
 export interface RunViewState {
   data?: FetchDataContent
   rounds: Round[]
+  risk?: RiskAssessment
   auditor?: AuditorVerdict
+  dataCheck?: DataCheck
   error?: string
   forcedExit: boolean
   /** How the stream ended, or null while the run is still live. */
@@ -61,8 +72,12 @@ export function runReducer(state: RunViewState, action: RunAction): RunViewState
         forcedExit: event.content.forced_exit,
         rounds: updateLastRound(state.rounds, { result: { forcedExit: event.content.forced_exit } }),
       }
+    case 'risk_officer':
+      return { ...next, risk: event.content.risk_assessment }
     case 'auditor':
-      return { ...next, auditor: event.content.auditor_verdict }
+      return { ...next, auditor: event.content.auditor_verdict, dataCheck: event.content.data_check ?? undefined }
+    case 'comparator':
+      return next // comparison-level step: handled by compareReducer
     case 'error':
       return { ...next, error: event.content.message }
   }
@@ -77,7 +92,11 @@ export function currentActivity(state: RunViewState): string | null {
   if (!last.critic) return `Critic is reviewing round ${last.number}…`
   if (!last.result) return `Checking for consensus after round ${last.number}…`
   const debateOver = state.forcedExit || state.rounds.some((r) => r.result && r.critic?.agrees)
-  if (debateOver) return state.auditor ? 'Finishing…' : 'Auditor is checking every claim against the evidence…'
+  if (debateOver) {
+    if (state.auditor) return 'Finishing…'
+    if (!state.risk) return 'Risk Officer is weighing what could make the thesis wrong…'
+    return 'Auditor is checking every claim against the evidence…'
+  }
   return `Analyst is revising (round ${last.number + 1})…`
 }
 

@@ -15,7 +15,8 @@ from src.core.nodes.critic import CRITIC_TOOL_NAME
 from src.core.schemas import AnalystOutput, AuditorVerdict, CriticFeedback
 from src.core.state import GraphState
 from src.tools.market_data import InvalidTickerError
-from tests.fakes import ToolRoutingClient
+from src.core.nodes.risk_officer import RISK_OFFICER_TOOL_NAME
+from tests.fakes import ToolRoutingClient, low_risk_assessment
 from tests.test_market_data import FakeTicker
 
 AGREE = CriticFeedback(agrees=True, objections=[], missing_context=[])
@@ -114,6 +115,7 @@ def debate_client(critic_agrees_in_round: int | None) -> ToolRoutingClient:
     return ToolRoutingClient({
         ANALYST_TOOL_NAME: analysis,
         CRITIC_TOOL_NAME: lambda n: AGREE if n == critic_agrees_in_round else DISAGREE,
+        RISK_OFFICER_TOOL_NAME: low_risk_assessment,
         AUDITOR_TOOL_NAME: lambda n: GROUNDED,
     })
 
@@ -151,7 +153,8 @@ def test_graph_stops_early_on_consensus_in_round_two() -> None:
 def test_graph_single_round_on_immediate_consensus() -> None:
     client = debate_client(critic_agrees_in_round=1)
     final = run(client, max_iterations=3)
-    assert [c["tool"] for c in client.calls] == [ANALYST_TOOL_NAME, CRITIC_TOOL_NAME, AUDITOR_TOOL_NAME]
+    assert [c["tool"] for c in client.calls] == [ANALYST_TOOL_NAME, CRITIC_TOOL_NAME, RISK_OFFICER_TOOL_NAME,
+                                                AUDITOR_TOOL_NAME]
     assert final.iteration_count == 1
     assert final.forced_exit is False
 
@@ -195,10 +198,12 @@ def test_stream_yields_node_updates_in_order() -> None:
                                    ticker_factory=lambda s: FakeTicker(), filing_retriever=no_filings))
     assert [name for name, _ in updates] == [
         "fetch_data", "analyst", "critic", "consensus_check",
-        "analyst", "critic", "consensus_check", "auditor",
+        "analyst", "critic", "consensus_check", "risk_officer", "auditor",
     ]
-    assert updates[-2][1] == {"iteration_count": 2, "forced_exit": True}
-    assert updates[-1][1] == {"auditor_verdict": GROUNDED}
+    assert updates[-3][1] == {"iteration_count": 2, "forced_exit": True}
+    assert updates[-2][1]["risk_assessment"].overall_risk == "medium"
+    assert updates[-1][1]["auditor_verdict"] == GROUNDED
+    assert updates[-1][1]["data_check"].checks[0].status == "not_checkable"  # data point "x"
 
 
 def test_invalid_ticker_rejected_before_any_llm_call() -> None:

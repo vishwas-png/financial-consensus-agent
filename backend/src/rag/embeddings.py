@@ -13,6 +13,7 @@ from typing import Any, Protocol
 import httpx
 
 from src.config import COHERE_API_KEY, COHERE_EMBEDDING_MODEL, EMBEDDING_PROVIDER
+from src.observability import current_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class LocalEmbedder:
         for start in range(0, len(texts), self.batch_size):
             batch = texts[start:start + self.batch_size]
             vectors.extend([float(x) for x in vector] for vector in self._model(batch))
+        _record_embedding(len(texts))
         return vectors
 
 
@@ -123,6 +125,7 @@ class CohereEmbedder:
         body = {"model": self.model, "texts": texts, "input_type": input_type,
                 "embedding_types": ["float"], "truncate": "END"}
         data = self._post_with_retry(body)
+        _record_embedding(len(texts))  # one API call
         embeddings = (data.get("embeddings") or {}).get("float") or []
         if len(embeddings) != len(texts):
             raise EmbeddingError(f"Cohere returned {len(embeddings)} embeddings for {len(texts)} texts")
@@ -150,6 +153,12 @@ class CohereEmbedder:
                            problem, attempt, self.max_attempts, delay)
             self._sleep(delay)
         raise AssertionError("unreachable")
+
+
+def _record_embedding(texts: int) -> None:
+    metrics = current_metrics()
+    if metrics is not None:
+        metrics.add_embedding_call(texts)
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:

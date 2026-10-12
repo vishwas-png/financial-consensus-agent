@@ -10,20 +10,26 @@ import type { RunDetail } from '../api/types'
 import { useApi } from '../api/useApi'
 import { useAuth } from '../auth/context'
 import { API_URL } from '../config'
+import { compareReducer, initialCompareState } from '../runs/compareReducer'
+import { CompareRunView } from '../runs/CompareRunView'
 import { initialRunState, parseExcerpts, runReducer } from '../runs/runReducer'
+import { RunDetails } from '../runs/RunDetails'
 import { RunView } from '../runs/RunView'
 
 export function RunPage() {
   const { runId = '' } = useParams()
   const api = useApi()
   const { token } = useAuth()
+  // One stream feeds both reducers; which one is drawn depends on the run's kind (Stage 9)
   const [state, dispatch] = useReducer(runReducer, initialRunState)
+  const [compareState, dispatchCompare] = useReducer(compareReducer, initialCompareState)
   const [detail, setDetail] = useState<RunDetail | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
     dispatch({ type: 'reset' })
+    dispatchCompare({ type: 'reset' })
 
     async function load() {
       try {
@@ -32,10 +38,14 @@ export function RunPage() {
           baseUrl: API_URL,
           runId,
           getToken: () => token,
-          onEvent: (event) => dispatch({ type: 'event', event }),
+          onEvent: (event) => {
+            dispatch({ type: 'event', event })
+            dispatchCompare({ type: 'event', event })
+          },
           signal: controller.signal,
         })
         dispatch({ type: 'end', status: end })
+        dispatchCompare({ type: 'end', status: end })
         if (!controller.signal.aborted) setDetail(await api.getRun(runId)) // final output + excerpts
       } catch (e) {
         if (controller.signal.aborted) return // navigated away
@@ -60,11 +70,20 @@ export function RunPage() {
   }
 
   const excerpts = parseExcerpts(detail?.final_output?.filing_chunks ?? [])
+  const isComparison = detail?.kind === 'compare'
+  const finished = isComparison ? compareState.finished : state.finished
   return (
     <main>
-      <h1>Research: {detail?.ticker ?? '…'}</h1>
-      <RunView ticker={detail?.ticker ?? ''} state={state} excerpts={excerpts} />
-      {state.finished && (
+      <h1>
+        {isComparison ? 'Comparison' : 'Research'}: {detail?.ticker ?? '…'}
+      </h1>
+      {isComparison ? (
+        <CompareRunView tickers={detail?.tickers ?? []} state={compareState} excerpts={excerpts} />
+      ) : (
+        <RunView ticker={detail?.ticker ?? ''} state={state} excerpts={excerpts} />
+      )}
+      {finished && detail?.metrics && <RunDetails metrics={detail.metrics} />}
+      {finished && (
         <p>
           <Link to="/">Start another run</Link> · <Link to="/history">History</Link>
         </p>

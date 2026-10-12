@@ -40,7 +40,8 @@ def test_fetch_data_fills_market_data_and_filing_chunks() -> None:
 
     node = make_fetch_data_node(ticker_factory=lambda s: FakeTicker(), filing_retriever=retriever)
     update = node(GraphState(ticker="AAPL"))
-    assert set(update) == {"raw_data", "filing_chunks"}
+    assert set(update) == {"raw_data", "filing_chunks", "filing_status"}
+    assert update["filing_status"] == "found"
     assert update["raw_data"]["ticker"] == "AAPL"
     assert update["filing_chunks"] == CHUNKS
     assert requested == ["AAPL"]
@@ -52,7 +53,7 @@ def test_fetch_data_continues_without_filings_on_filing_error(caplog: pytest.Log
 
     node = make_fetch_data_node(ticker_factory=lambda s: FakeTicker(), filing_retriever=missing)
     update = node(GraphState(ticker="SPY"))
-    assert update["filing_chunks"] == []
+    assert update["filing_chunks"] == [] and update["filing_status"] == "unavailable"
     assert update["raw_data"]["ticker"] == "SPY"
     assert "No SEC filing excerpts for SPY" in caplog.text
 
@@ -226,7 +227,7 @@ def test_fetch_data_does_not_wait_forever_for_slow_ingestion(caplog: pytest.LogC
     update = node(GraphState(ticker="AAPL"))
     release.set()  # let the background ingestion finish
     assert time.monotonic() - started < 2
-    assert update["filing_chunks"] == [] and update["raw_data"]["ticker"] == "AAPL"
+    assert update["filing_chunks"] == [] and update["filing_status"] == "timeout" and update["raw_data"]["ticker"] == "AAPL"
     assert "exceeded" in caplog.text
 
 
@@ -238,5 +239,5 @@ def test_fetch_data_continues_when_embedding_service_fails(caplog: pytest.LogCap
 
     node = make_fetch_data_node(ticker_factory=lambda s: FakeTicker(), filing_retriever=failing)
     update = node(GraphState(ticker="AAPL"))
-    assert update["filing_chunks"] == []
+    assert update["filing_chunks"] == [] and update["filing_status"] == "unavailable"
     assert "No SEC filing excerpts for AAPL" in caplog.text

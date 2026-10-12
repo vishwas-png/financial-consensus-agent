@@ -60,6 +60,8 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized, fetchImpl =
         method: 'POST',
         body: JSON.stringify({ query, max_iterations: maxIterations }),
       }),
+    startComparison: (query: string) =>
+      request<RunCreated>('/compare', { method: 'POST', body: JSON.stringify({ query }) }),
     getRun: (runId: string) => request<RunDetail>(`/research/${encodeURIComponent(runId)}`),
     getHistory: () => request<RunSummary[]>('/history'),
     getMe: () => request<Me>('/me'),

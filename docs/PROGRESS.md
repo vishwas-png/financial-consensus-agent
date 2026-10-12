@@ -458,3 +458,85 @@ Stage 8: deployment and hardening.
 
 ### Next
 Stage 9 (extensions) starts only when the owner says "plan stage 9".
+
+## Stage 9: Extensions (IN PROGRESS)
+
+### Approved plan
+Built in order 9a → 9b → 9c on branch `stage/9-extensions`, merged to `main` (which auto-deploys) only after all three are verified.
+
+**9a. Observability**
+- **Collector:** a per-run `RunMetrics` collector (context variable; `core/` stays user-agnostic). It records:
+  - step durations;
+  - LLM calls, retries and tokens (from Groq `usage`);
+  - embedding calls;
+  - the filing status (`cached` / `indexed` / `timeout` / `none`).
+- **Where it surfaces:**
+  - `fetch_data` events carry `filing_status`;
+  - log lines carry `run=<id>`;
+  - migration: `research_runs.metrics` (JSON), returned by `GET /research/{id}`;
+  - a "Run details" panel in the UI.
+
+**9b. Extra agent roles**
+- **Risk Officer (LLM):** a node between `consensus_check` and `auditor`.
+  - Output: `RiskAssessment`, with `key_risks` (each with description, severity and a filing citation), `what_would_change_the_thesis`, and `overall_risk`.
+  - Citations are validated, with one repair attempt.
+- **Data Checker (code, no LLM):** inside the auditor step. It compares the analyst's `metric = value` data points with `raw_data`, within a tolerance.
+- **Plumbing:** a new `RunStep.RISK_OFFICER`; UI and evals updated.
+
+**9c. Multi-ticker comparison**
+- **Extraction:** `TickerListExtraction` takes 2–3 tickers, with `no_us_listing` handling.
+- **Core:** `stream_comparison` runs the existing graph per ticker (1 round each, events tagged by ticker), then a Comparator LLM node produces `ComparisonOutput` with validated citations.
+- **API:** `POST /compare` creates one run with `kind=compare` and `tickers`.
+  - Quota counts it as N runs, under the row lock.
+  - The run timeout and expiry scale with N.
+- **UI:** compare mode, per-ticker tabs plus the verdict, and history shows "AAPL vs MSFT".
+- **Evals:** 3 extraction golden cases.
+
+**Git and verification**
+- **Commits:**
+  1. feat(obs) metrics;
+  2. feat(ui) details panel;
+  3. feat(core) Risk Officer;
+  4. feat(core) Data Checker;
+  5. feat(core) comparison;
+  6. feat(api) /compare;
+  7. feat(ui) compare mode;
+  8. test(evals);
+  9. docs.
+- **Verification:**
+  - offline tests;
+  - live opt-in tests for the Risk Officer and the Comparator;
+  - evals;
+  - CI (with Postgres migrations);
+  - deploy;
+  - owner smoke test: one single run and one 2-ticker comparison.
+- **Finish:** tag `stage-9-extensions`, run the secret scan, then push.
+
+### What was built
+- **9a. Observability**
+  - `src/observability.py`: the `RunMetrics` collector, `run_context` and `RunIdLogFilter`. The Groq client, embedders and ingestion report to it; the worker records step times.
+  - Migration `aebcb5af70f2` adds `research_runs.metrics`.
+  - The UI has a **Run details** panel, and the data card explains a missing 10-K (`filing_status`).
+- **9b. Extra agent roles**
+  - `core/nodes/risk_officer.py` with `RISK_OFFICER_PROMPT` and the `RiskAssessment` schema (validated citations).
+  - `core/data_checker.py`: code-only checks of `field = value` data points, run inside the auditor step.
+  - Graph: `consensus_check → risk_officer → auditor`.
+  - The UI has a Risk Officer card and a data-check summary.
+  - Evals: `data_check` (12 cases) and `risk` (2 live cases).
+- **9c. Multi-ticker comparison**
+  - **Core:** `extract_tickers` (`TickerListExtraction`) and `core/comparison.py` (`stream_comparison` plus the Comparator with `ComparisonOutput`).
+  - **Data and quota:** migration `673ff4671f7b` adds `kind`, `tickers` and `units`, and widens `ticker` to 40 characters. The quota sums units; timeouts and expiry scale with N.
+  - **API:** `POST /compare`.
+  - **Worker:** one shared save-each-step loop for single runs and comparisons.
+  - **UI:** compare mode, `compareReducer`, and `CompareRunView` with tabs and a Comparison card.
+  - **Evals:** `compare_extraction` (4 cases).
+
+### How it was tested
+- **Backend:** 431 offline tests pass. Opt-in live tests pass for the Risk Officer, ticker-list extraction and Cohere.
+- **Frontend:** 95 tests pass; type check, lint and build are clean.
+- **"Fails without the fix" checks:** a comparison timeout test (the same slow run fails with a smaller budget).
+- **Live:**
+  - a 1-round AAPL debate with the Risk Officer (valid citations) and the Data Checker (9 match, 0 mismatch, 1 unchecked);
+  - an AAPL vs MSFT comparison end to end (it exposed the wrong "net cash" number, now fixed in the prompt).
+- **Evals, live:** data_check 12/12, risk 2/2, compare_extraction 4/4.
+- **CI on `stage/9-extensions`:** passed after the backend commits (backend with Postgres migrations, frontend, docker-image).

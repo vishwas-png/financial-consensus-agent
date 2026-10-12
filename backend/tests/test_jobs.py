@@ -29,7 +29,7 @@ RAW = {"profile": {"name": "Apple Inc.", "currency": "USD"}, "price": {"current"
 
 def fake_graph(ticker: str, max_iterations: int = 3) -> Iterator[tuple[str, dict[str, Any]]]:
     """One round ending in a forced exit (max_iterations=1), then the auditor."""
-    yield "fetch_data", {"raw_data": RAW, "filing_chunks": [CHUNK]}
+    yield "fetch_data", {"raw_data": RAW, "filing_chunks": [CHUNK], "filing_status": "found"}
     yield "analyst", {"analyst_output": ANALYSIS}
     yield "critic", {"critic_feedback": DISAGREE}
     yield "consensus_check", {"iteration_count": 1, "forced_exit": True}
@@ -79,7 +79,7 @@ def test_successful_run_saves_every_step_and_final_output(session_factory: sessi
                                         RunStep.CONSENSUS_CHECK, RunStep.AUDITOR]
     # fetch_data is a summary, not the full data
     assert events[0].content == {"company": "Apple Inc.", "price": 336.9, "currency": "USD",
-                                 "filing_excerpts": 1, "filing_ids": ["AAPL-10K-2025-1A-003"]}
+                                 "filing_excerpts": 1, "filing_status": "found", "filing_ids": ["AAPL-10K-2025-1A-003"]}
     assert events[1].content["analyst_output"]["thesis"] == "Fairly valued."
     assert events[3].content == {"iteration_count": 1, "forced_exit": True}
 
@@ -214,7 +214,7 @@ def test_run_expired_by_the_api_stays_failed(session_factory: sessionmaker) -> N
             steps_run.append(node)
             if node == "fetch_data":  # the API expires the run while this slow step runs
                 with session_factory() as db:
-                    expire_overdue_runs(db, "alice", created_before=datetime.now(timezone.utc) + timedelta(seconds=1))
+                    expire_overdue_runs(db, "alice", now=datetime.now(timezone.utc) + timedelta(seconds=1), max_age_seconds=0)
                     db.commit()
             yield node, update
 
@@ -251,3 +251,117 @@ def test_worker_holds_no_transaction_open_during_a_step() -> None:
     RunWorker(recording_factory, run_graph=graph, executor=InlineExecutor()).submit(run_id, "AAPL", 1)  # type: ignore[arg-type]
     assert load(base, run_id)[0].status == RunStatus.DONE
     assert open_during_steps == [False] * 5
+
+
+# ---------- Metrics (Stage 9) ----------
+
+def test_successful_run_saves_step_metrics(session_factory: sessionmaker) -> None:
+    run_id = new_run(session_factory)
+    RunWorker(session_factory, run_graph=fake_graph, executor=InlineExecutor()).submit(run_id, "AAPL", 1)
+    run, _ = load(session_factory, run_id)
+    assert [step["step"] for step in run.metrics["steps"]] == [
+        "fetch_data", "analyst", "critic", "consensus_check", "auditor"]
+    assert run.metrics["total_seconds"] is not None
+    assert run.metrics["llm_calls"] == 0  # the fake graph makes no real Groq calls
+
+
+def test_failed_run_still_saves_metrics(session_factory: sessionmaker) -> None:
+    def failing_after_one_step(ticker: str, max_iterations: int = 3) -> Iterator[tuple[str, dict[str, Any]]]:
+        yield "fetch_data", {"raw_data": RAW, "filing_chunks": [], "filing_status": "empty"}
+        raise LLMUnavailableError("429")
+
+    run_id = new_run(session_factory)
+    RunWorker(session_factory, run_graph=failing_after_one_step, executor=InlineExecutor()).submit(run_id, "AAPL", 1)
+    run, _ = load(session_factory, run_id)
+    assert run.status == RunStatus.FAILED
+    assert [step["step"] for step in run.metrics["steps"]] == ["fetch_data"]
+
+
+
+# ---------- Stage 9: comparison runs ----------
+
+COMPARISON = {"per_ticker": [{"ticker": "AAPL", "summary": "a", "stance": "neutral"},
+                             {"ticker": "MSFT", "summary": "m", "stance": "bullish"}],
+              "key_differences": ["d"], "preferred": "MSFT", "preference_reasoning": "r", "confidence": "low",
+              "filing_citations": []}
+
+
+def fake_comparison(tickers: list[str], max_iterations: int = 1) -> Iterator[tuple[str | None, str, dict[str, Any]]]:
+    from src.core.schemas import ComparisonOutput
+
+    for ticker in tickers:
+        for node, update in fake_graph(ticker, max_iterations):
+            if node == "fetch_data":
+                update = update | {"raw_data": RAW | {"ticker": ticker}}
+            yield ticker, node, update
+    yield None, "comparator", {"comparison": ComparisonOutput.model_validate(COMPARISON)}
+
+
+def new_comparison(session_factory: sessionmaker, tickers: list[str]) -> str:
+    with session_factory() as db:
+        run = ResearchRun(user_id="alice", ticker=" vs ".join(tickers), kind="compare", tickers=tickers,
+                          units=len(tickers))
+        db.add(run)
+        db.commit()
+        return run.id
+
+
+def test_comparison_saves_tagged_steps_and_a_combined_result(session_factory: sessionmaker) -> None:
+    run_id = new_comparison(session_factory, ["AAPL", "MSFT"])
+    RunWorker(session_factory, executor=InlineExecutor(), run_comparison=fake_comparison).submit_comparison(
+        run_id, ["AAPL", "MSFT"])
+    run, events = load(session_factory, run_id)
+
+    assert run.status == RunStatus.DONE
+    tags = [(e.content.get("ticker"), e.step.value) for e in events]
+    assert tags[:6] == [("AAPL", s) for s in ("fetch_data", "analyst", "critic", "consensus_check", "auditor")] + \
+        [("MSFT", "fetch_data")]
+    assert tags[-1] == (None, "comparator")
+    assert run.final_output["kind"] == "compare"
+    assert run.final_output["comparison"]["preferred"] == "MSFT"
+    assert set(run.final_output["per_ticker"]) == {"AAPL", "MSFT"}
+    assert run.final_output["per_ticker"]["MSFT"]["ticker"] == "MSFT"
+    assert [s.get("ticker") for s in run.metrics["steps"]][-1] is None
+
+
+def test_comparison_failure_names_the_failing_ticker(session_factory: sessionmaker) -> None:
+    def fails_on_second(tickers: list[str], max_iterations: int = 1) -> Iterator[tuple[str | None, str, dict[str, Any]]]:
+        yield from ((t, n, u) for t, n, u in fake_comparison(tickers[:1]) if t)  # first ticker completes
+        raise TickerNotFoundError("no data")
+
+    run_id = new_comparison(session_factory, ["AAPL", "ZZZZ"])
+    RunWorker(session_factory, executor=InlineExecutor(), run_comparison=fails_on_second).submit_comparison(
+        run_id, ["AAPL", "ZZZZ"])
+    run, events = load(session_factory, run_id)
+    assert run.status == RunStatus.FAILED
+    assert "ZZZZ" in events[-1].content["message"] and "AAPL" not in events[-1].content["message"]
+
+
+def test_comparison_timeout_scales_with_ticker_count(session_factory: sessionmaker) -> None:
+    clock = FakeClock(step=0)  # time advances only in the fake runner below
+
+    def slow(tickers: list[str], max_iterations: int = 1) -> Iterator[tuple[str | None, str, dict[str, Any]]]:
+        for event in fake_comparison(tickers):
+            clock.now += 15   # 13 steps x 15 s = 195 s: over 100 s, under 2 x 100 s
+            yield event
+
+    run_id = new_comparison(session_factory, ["AAPL", "MSFT"])
+    RunWorker(session_factory, executor=InlineExecutor(), run_comparison=slow, run_timeout_seconds=100,
+              clock=clock).submit_comparison(run_id, ["AAPL", "MSFT"])
+    assert load(session_factory, run_id)[0].status == RunStatus.DONE
+
+
+
+def test_same_slow_comparison_times_out_without_scaling(session_factory: sessionmaker) -> None:
+    clock = FakeClock(step=0)
+
+    def slow(tickers: list[str], max_iterations: int = 1) -> Iterator[tuple[str | None, str, dict[str, Any]]]:
+        for event in fake_comparison(tickers):
+            clock.now += 15
+            yield event
+
+    run_id = new_comparison(session_factory, ["AAPL", "MSFT"])
+    # 50 s per ticker = 100 s in total, less than the 195 s this run needs: the scaled limit is enforced
+    RunWorker(session_factory, executor=InlineExecutor(), run_comparison=slow, run_timeout_seconds=50,
+              clock=clock).submit_comparison(run_id, ["AAPL", "MSFT"])
+    assert load(session_factory, run_id)[0].status == RunStatus.FAILED

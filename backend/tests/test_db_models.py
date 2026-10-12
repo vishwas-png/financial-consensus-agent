@@ -227,7 +227,7 @@ def test_expire_overdue_runs_only_touches_this_users_old_active_runs(db: Session
     old_done.status = RunStatus.DONE
     db.commit()
 
-    assert expire_overdue_runs(db, "alice", created_before=now - timedelta(minutes=15)) == 2
+    assert expire_overdue_runs(db, "alice", now=now, max_age_seconds=15 * 60) == 2
     db.commit()
     db.expire_all()
     status = {run.id: db.get(ResearchRun, run.id).status for run in (old_pending, old_running, old_done, fresh, bobs_old)}  # type: ignore[union-attr]
@@ -235,3 +235,30 @@ def test_expire_overdue_runs_only_touches_this_users_old_active_runs(db: Session
                       old_done.id: RunStatus.DONE, fresh.id: RunStatus.PENDING, bobs_old.id: RunStatus.PENDING}
     events = get_events_for_run(db, "alice", old_running.id)
     assert [e.step for e in events] == [RunStep.ERROR] and "didn't finish in time" in events[0].content["message"]
+
+
+
+# ---------- Stage 9: comparison runs cost one unit per ticker ----------
+
+def test_count_runs_since_sums_units(db: Session) -> None:
+    add_user(db, "alice")
+    add_run(db, "alice")
+    comparison = add_run(db, "alice", ticker="AAPL vs MSFT vs NVDA")
+    comparison.kind, comparison.tickers, comparison.units = "compare", ["AAPL", "MSFT", "NVDA"], 3
+    db.commit()
+    assert count_runs_since(db, "alice", datetime.now(timezone.utc) - timedelta(hours=24)) == 4
+
+
+def test_comparison_gets_a_proportionally_longer_expiry(db: Session) -> None:
+    add_user(db, "alice")
+    now = datetime.now(timezone.utc)
+    single, comparison = add_run(db, "alice"), add_run(db, "alice", ticker="AAPL vs MSFT")
+    comparison.kind, comparison.units = "compare", 2
+    for run in (single, comparison):
+        run.created_at = now - timedelta(minutes=20)   # past 15 min, but within 2 x 15 min
+    db.commit()
+    assert expire_overdue_runs(db, "alice", now=now, max_age_seconds=15 * 60) == 1
+    db.commit()
+    db.expire_all()
+    assert db.get(ResearchRun, single.id).status == RunStatus.FAILED            # type: ignore[union-attr]
+    assert db.get(ResearchRun, comparison.id).status == RunStatus.PENDING       # type: ignore[union-attr]

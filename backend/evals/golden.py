@@ -51,12 +51,53 @@ class PipelineCase(BaseModel):
     notes: str
 
 
+class DataCheckCase(BaseModel):
+    """One analyst data point and what the Data Checker (code, no LLM) should say about it."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    fixture: str
+    data_point: str
+    expected_status: Literal["match", "mismatch", "unknown_field", "not_checkable"]
+    notes: str
+
+
+class RiskCase(BaseModel):
+    """Live Risk Officer run on a judge case's analysis + frozen evidence, with code checks."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    fixture: str
+    analysis_from: str                 # id of a judge case whose analysis is reused
+    forced_exit: bool
+    critic_objections: list[str]
+    # At least one of these (case-insensitive) should appear in the risks or conditions
+    expect_any_keyword: list[str]
+    notes: str
+
+
+class CompareExtractionCase(BaseModel):
+    """Comparison request -> expected 2-3 tickers, in order. None means it must be declined."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    request: str
+    expected_tickers: list[str] | None
+    notes: str
+
+
 class GoldenSet(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: int
     extraction_cases: list[ExtractionCase]
     judge_cases: list[JudgeCase]
     pipeline_cases: list[PipelineCase]
+    data_check_cases: list[DataCheckCase] = Field(default_factory=list)   # Stage 9
+    risk_cases: list[RiskCase] = Field(default_factory=list)              # Stage 9
+    compare_extraction_cases: list[CompareExtractionCase] = Field(default_factory=list)   # Stage 9
+
+    def judge_case(self, case_id: str) -> JudgeCase:
+        return next(case for case in self.judge_cases if case.id == case_id)
 
 
 def load_golden_set(path: Path = GOLDEN_SET_PATH) -> GoldenSet:

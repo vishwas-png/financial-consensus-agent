@@ -8,7 +8,7 @@ doesn't even confirm that the run exists.
 import json
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -23,6 +23,7 @@ from src.api.quota import QUOTA_WINDOW, check_quota, expire_stuck_runs, lock_use
 from src.clients.groq_client import LLMError, LLMUnavailableError
 from src.config import MAX_ACTIVE_RUNS_PER_USER, MAX_ITERATIONS, MAX_USER_ITERATIONS, RUNS_PER_DAY
 from src.core.structured_output import ToolCallError
+from src.core.schemas import MAX_COMPARE_TICKERS, MIN_COMPARE_TICKERS
 from src.core.tool_calling import NoUSListingError
 from src.db.models import (
     ResearchRun,
@@ -52,6 +53,13 @@ class ResearchRequest(BaseModel):
     max_iterations: int = Field(default=MAX_ITERATIONS, ge=1, le=MAX_USER_ITERATIONS)
 
 
+class CompareRequest(BaseModel):
+    """Stage 9: "Apple vs Microsoft" or "AAPL MSFT NVDA". Each company gets 1 debate round."""
+
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1, max_length=200, description='e.g. "Apple vs Microsoft"')
+
+
 class RunCreated(BaseModel):
     run_id: str
     ticker: str
@@ -68,15 +76,19 @@ class EventOut(BaseModel):
 class RunDetail(BaseModel):
     id: str
     ticker: str
+    kind: str = "single"                 # "single" or "compare" (Stage 9)
+    tickers: list[str] | None = None     # the compared tickers, for kind == "compare"
     status: str
     created_at: datetime
     final_output: dict[str, Any] | None
+    metrics: dict[str, Any] | None = None   # step durations, LLM calls/tokens/retries (Stage 9)
     events: list[EventOut]
 
 
 class RunSummary(BaseModel):
     id: str
     ticker: str
+    kind: str = "single"
     status: str
     created_at: datetime
     outcome: str | None
@@ -101,28 +113,11 @@ def start_research(
     check_quota(db, user.id)  # fast fail BEFORE any LLM call
     db.commit()  # end this read transaction; don't keep it open during the slow LLM call
 
-    try:
-        ticker: str = request.app.state.ticker_extractor(body.query)
-    except NoUSListingError as error:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="That company doesn't appear to have a US stock listing. This app covers US-listed stocks only.",
-        ) from error
-    except ToolCallError as error:
-        # No run is created, so a failed extraction costs the user no quota
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Couldn't identify a single US-listed company in your request. Try a company name or ticker.",
-        ) from error
-    except LLMUnavailableError as error:
-        # Groq's error text names the cause (429 rate limit, connection, 5xx); it holds no secrets
-        logger.warning("Ticker extraction failed, LLM unavailable: %s", error)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail="The AI service is busy. Please try again in a minute.") from error
-    except LLMError as error:
-        logger.warning("Ticker extraction failed, LLM error: %s", error)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="The AI service returned an error. Please try again.") from error
+    ticker: str = _extract(
+        request.app.state.ticker_extractor, body.query,
+        no_listing="That company doesn't appear to have a US stock listing. This app covers US-listed stocks only.",
+        unclear="Couldn't identify a single US-listed company in your request. Try a company name or ticker.",
+    )
 
     # Check again and insert atomically: another request from this user may have started a run
     # while we were extracting the ticker. The row lock makes those requests take turns.
@@ -135,14 +130,65 @@ def start_research(
     return RunCreated(run_id=run.id, ticker=ticker, status=run.status.value)
 
 
+@router.post("/compare", status_code=status.HTTP_202_ACCEPTED, response_model=RunCreated)
+def start_comparison(
+    body: CompareRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RunCreated:
+    """Stage 9: compare 2-3 companies. One run; it costs one quota unit per company."""
+    expire_stuck_runs(db, user.id)
+    check_quota(db, user.id, units=MIN_COMPARE_TICKERS)  # fast fail: a comparison needs at least 2
+    db.commit()
+
+    tickers: list[str] = _extract(
+        request.app.state.tickers_extractor, body.query,
+        no_listing="One of those companies doesn't appear to have a US stock listing. "
+                   "This app covers US-listed stocks only.",
+        unclear=f"Couldn't identify {MIN_COMPARE_TICKERS} to {MAX_COMPARE_TICKERS} different US-listed companies. "
+                "Try e.g. \"Apple vs Microsoft\".",
+    )
+
+    # Same atomic re-check as /research, now with the real cost (2 or 3 units)
+    lock_user_for_quota(db, user.id)
+    check_quota(db, user.id, units=len(tickers))
+    label = " vs ".join(tickers)
+    run = ResearchRun(user_id=user.id, ticker=label, kind="compare", tickers=tickers, units=len(tickers))
+    db.add(run)
+    db.commit()  # releases the lock
+    request.app.state.worker.submit_comparison(run.id, tickers)
+    return RunCreated(run_id=run.id, ticker=label, status=run.status.value)
+
+
+def _extract(extractor: Callable[[str], Any], query: str, no_listing: str, unclear: str) -> Any:
+    """Run an LLM extraction step, turning its failures into clear HTTP errors (no run, no quota used)."""
+    try:
+        return extractor(query)
+    except NoUSListingError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=no_listing) from error
+    except ToolCallError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=unclear) from error
+    except LLMUnavailableError as error:
+        # Groq's error text names the cause (429 rate limit, connection, 5xx); it holds no secrets
+        logger.warning("Ticker extraction failed, LLM unavailable: %s", error)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="The AI service is busy. Please try again in a minute.") from error
+    except LLMError as error:
+        logger.warning("Ticker extraction failed, LLM error: %s", error)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="The AI service returned an error. Please try again.") from error
+
+
 @router.get("/research/{run_id}", response_model=RunDetail)
 def get_research(run_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> RunDetail:
     run = get_run_for_user(db, user.id, run_id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     events = get_events_for_run(db, user.id, run_id)
-    return RunDetail(id=run.id, ticker=run.ticker, status=run.status.value, created_at=run.created_at,
-                     final_output=run.final_output, events=[_event_out(e) for e in events])
+    return RunDetail(id=run.id, ticker=run.ticker, kind=run.kind, tickers=run.tickers, status=run.status.value,
+                     created_at=run.created_at, final_output=run.final_output, metrics=run.metrics,
+                     events=[_event_out(e) for e in events])
 
 
 def _sse(event: str, data: dict[str, Any], event_id: int | None = None) -> str:
@@ -212,10 +258,15 @@ def history(user: User = Depends(get_current_user), db: Session = Depends(get_db
     summaries = []
     for run in get_runs_for_user(db, user.id):
         output = run.final_output or {}
-        summaries.append(RunSummary(
-            id=run.id, ticker=run.ticker, status=run.status.value, created_at=run.created_at,
-            outcome=output.get("outcome"), thesis=(output.get("analyst_output") or {}).get("thesis"),
-        ))
+        if run.kind == "compare":
+            comparison = output.get("comparison") or {}
+            preferred = comparison.get("preferred")
+            outcome = None if not comparison else (f"prefers {preferred}" if preferred else "no clear preference")
+            thesis = comparison.get("preference_reasoning")
+        else:
+            outcome, thesis = output.get("outcome"), (output.get("analyst_output") or {}).get("thesis")
+        summaries.append(RunSummary(id=run.id, ticker=run.ticker, kind=run.kind, status=run.status.value,
+                                    created_at=run.created_at, outcome=outcome, thesis=thesis))
     return summaries
 
 

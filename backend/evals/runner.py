@@ -11,15 +11,27 @@ from typing import Any
 
 import yfinance as yf
 
-from evals.golden import ExtractionCase, JudgeCase, PipelineCase, load_fixture
+from evals.golden import (
+    CompareExtractionCase,
+    DataCheckCase,
+    ExtractionCase,
+    JudgeCase,
+    PipelineCase,
+    RiskCase,
+    load_fixture,
+)
 from evals.metrics import claim_hit, pipeline_checks
 from src.clients.groq_client import GroqClient, LLMError
+from src.core.data_checker import check_data_point, known_values
 from src.core.graph import run_research
 from src.core.nodes.auditor import make_auditor_node
+from src.core.nodes.context import chunk_ids
+from src.core.nodes.risk_officer import make_risk_officer_node
 from src.core.nodes.fetch_data import FilingRetriever, default_filing_retriever
+from src.core.schemas import AnalystOutput, CriticFeedback
 from src.core.state import GraphState
 from src.core.structured_output import ToolCallError
-from src.core.tool_calling import extract_ticker
+from src.core.tool_calling import NoUSListingError, extract_ticker, extract_tickers
 from src.tools.market_data import MarketDataError, fetch_market_data
 
 
@@ -59,6 +71,41 @@ class PipelineResult:
     forced_exit: bool | None = None
     auditor_grounded: bool | None = None
     unsupported_claims: list[str] = field(default_factory=list)
+    error: str | None = None
+    seconds: float = 0.0
+
+    @property
+    def passed(self) -> bool:
+        return self.error is None and bool(self.checks) and all(self.checks.values())
+
+
+@dataclass
+class CompareExtractionResult:
+    case_id: str
+    expected: list[str] | None
+    got: list[str] | None
+    error: str | None
+    passed: bool
+    seconds: float
+
+
+@dataclass
+class DataCheckResult:
+    case_id: str
+    expected: str
+    got: str
+
+    @property
+    def passed(self) -> bool:
+        return self.got == self.expected
+
+
+@dataclass
+class RiskResult:
+    case_id: str
+    checks: dict[str, bool] = field(default_factory=dict)
+    overall_risk: str | None = None
+    risks: list[str] = field(default_factory=list)
     error: str | None = None
     seconds: float = 0.0
 
@@ -156,3 +203,52 @@ def run_pipeline_case(
         unsupported_claims=verdict.unsupported_claims if verdict else [],
         seconds=time.monotonic() - start,
     )
+
+
+# ---------- Data Checker (Stage 9, no LLM) ----------
+
+def run_data_check_case(case: DataCheckCase) -> DataCheckResult:
+    values = known_values(load_fixture(case.fixture)["raw_data"])
+    return DataCheckResult(case.id, case.expected_status, check_data_point(case.data_point, values).status)
+
+
+# ---------- Risk Officer (Stage 9, live) ----------
+
+def run_risk_case(case: RiskCase, analysis: AnalystOutput, client: GroqClient) -> RiskResult:
+    """Run the real risk_officer node on frozen evidence; check citations and focus in code."""
+    fixture = load_fixture(case.fixture)
+    critic = CriticFeedback(agrees=not case.forced_exit, objections=case.critic_objections, missing_context=[])
+    state = GraphState(ticker=fixture["ticker"], raw_data=fixture["raw_data"], filing_chunks=fixture["filing_chunks"],
+                       analyst_output=analysis, critic_feedback=critic, iteration_count=1,
+                       forced_exit=case.forced_exit)
+    start = time.monotonic()
+    try:
+        assessment = make_risk_officer_node(client)(state)["risk_assessment"]
+    except (ToolCallError, LLMError) as exc:
+        return RiskResult(case.id, error=f"{type(exc).__name__}: {exc}", seconds=time.monotonic() - start)
+    valid_ids = chunk_ids(state)
+    text = " ".join([r.risk for r in assessment.key_risks] + assessment.what_would_change_the_thesis).lower()
+    checks = {
+        "citations_valid": all(r.citation is None or r.citation in valid_ids for r in assessment.key_risks),
+        "cites_the_filing": any(r.citation for r in assessment.key_risks),
+        "on_topic": any(keyword.lower() in text for keyword in case.expect_any_keyword),
+    }
+    return RiskResult(case.id, checks, assessment.overall_risk, [r.risk for r in assessment.key_risks],
+                      None, time.monotonic() - start)
+
+
+# ---------- Comparison extraction (Stage 9, live) ----------
+
+def run_compare_extraction_case(case: CompareExtractionCase, client: GroqClient) -> CompareExtractionResult:
+    """expected_tickers set: exact list, in order. None: the request must be declined (NoUSListingError)."""
+    start = time.monotonic()
+    try:
+        got = extract_tickers(case.request, client)
+    except NoUSListingError as exc:
+        return CompareExtractionResult(case.id, case.expected_tickers, None, f"NoUSListingError: {exc}",
+                                       case.expected_tickers is None, time.monotonic() - start)
+    except (ToolCallError, LLMError) as exc:
+        return CompareExtractionResult(case.id, case.expected_tickers, None, f"{type(exc).__name__}: {exc}",
+                                       False, time.monotonic() - start)
+    return CompareExtractionResult(case.id, case.expected_tickers, got, None, got == case.expected_tickers,
+                                   time.monotonic() - start)

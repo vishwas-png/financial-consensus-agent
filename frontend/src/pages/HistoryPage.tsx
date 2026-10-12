@@ -4,7 +4,10 @@ import { ApiError } from '../api/client'
 import type { RunSummary } from '../api/types'
 import { useApi } from '../api/useApi'
 
-const OUTCOME_LABEL = { consensus: 'Consensus', unresolved_disagreement: 'Unresolved disagreement' } as const
+const OUTCOME_LABEL: Record<string, string> = {
+  consensus: 'Consensus',
+  unresolved_disagreement: 'Unresolved disagreement',
+}
 
 export function HistoryPage() {
   const api = useApi()
@@ -38,8 +41,10 @@ export function HistoryPage() {
             <li key={run.id}>
               <Link to={`/runs/${run.id}`} className="history-row">
                 <span className="ticker">{run.ticker}</span>
+                {run.kind === 'compare' && <span className="badge">comparison</span>}
                 <span className={`badge badge-status-${run.status}`}>{run.status}</span>
-                {run.outcome && <span className="muted">{OUTCOME_LABEL[run.outcome]}</span>}
+                {/* comparisons arrive as plain text ("prefers MSFT"), single runs as a code */}
+                {run.outcome && <span className="muted">{OUTCOME_LABEL[run.outcome] ?? run.outcome}</span>}
                 <time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString()}</time>
                 {run.thesis && <span className="history-thesis">{run.thesis}</span>}
               </Link>

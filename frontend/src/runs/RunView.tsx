@@ -2,7 +2,7 @@
 // verdict (or an error). Purely presentational: all logic lives in runReducer.ts.
 
 import { useState } from 'react'
-import type { AnalystOutput, AuditorVerdict, CriticFeedback, FetchDataContent } from '../api/types'
+import type { AnalystOutput, AuditorVerdict, CriticFeedback, DataCheck, FetchDataContent, RiskAssessment } from '../api/types'
 import { currentActivity, debateOutcome, type Round, type RunViewState } from './runReducer'
 
 type Excerpts = Record<string, { section: string; text: string }>
@@ -12,10 +12,12 @@ interface RunViewProps {
   state: RunViewState
   /** Filing excerpt texts by id; available once the run has finished. */
   excerpts?: Excerpts
+  /** Off inside a comparison, which shows one activity line for the whole run. */
+  showActivity?: boolean
 }
 
-export function RunView({ ticker, state, excerpts = {} }: RunViewProps) {
-  const activity = currentActivity(state)
+export function RunView({ ticker, state, excerpts = {}, showActivity = true }: RunViewProps) {
+  const activity = showActivity ? currentActivity(state) : null
   const outcome = debateOutcome(state)
   return (
     <div className="run-view">
@@ -24,7 +26,8 @@ export function RunView({ ticker, state, excerpts = {} }: RunViewProps) {
         <RoundSection key={round.number} round={round} excerpts={excerpts} />
       ))}
       {outcome && <OutcomeBanner kind={outcome.kind} rounds={outcome.rounds} />}
-      {state.auditor && <AuditorCard verdict={state.auditor} />}
+      {state.risk && <RiskCard assessment={state.risk} excerpts={excerpts} />}
+      {state.auditor && <AuditorCard verdict={state.auditor} dataCheck={state.dataCheck} />}
       {state.error && (
         <section className="card card-error" role="alert">
           <h3>Run failed</h3>
@@ -53,8 +56,18 @@ function DataCard({ ticker, data }: { ticker: string; data: FetchDataContent }) 
       <p>
         Price {price} · {data.filing_excerpts} excerpts from the latest 10-K
       </p>
+      {data.filing_status && data.filing_status !== 'found' && (
+        <p className="muted">{FILING_STATUS_NOTES[data.filing_status]}</p>
+      )}
     </section>
   )
+}
+
+// Shown when a run has no 10-K evidence, so the reader knows the debate used market data only
+const FILING_STATUS_NOTES: Record<'empty' | 'unavailable' | 'timeout', string> = {
+  empty: 'No 10-K text was found for this company, so the agents used market data only.',
+  unavailable: 'The 10-K could not be loaded right now, so the agents used market data only.',
+  timeout: 'Indexing the 10-K took too long, so this run used market data only. The next run should have it.',
 }
 
 function RoundSection({ round, excerpts }: { round: Round; excerpts: Excerpts }) {
@@ -161,7 +174,63 @@ function OutcomeBanner({ kind, rounds }: { kind: 'consensus' | 'unresolved'; rou
   )
 }
 
-function AuditorCard({ verdict }: { verdict: AuditorVerdict }) {
+function RiskCard({ assessment, excerpts }: { assessment: RiskAssessment; excerpts: Excerpts }) {
+  return (
+    <article className="card card-risk">
+      <header>
+        <h3>Risk Officer</h3>
+        <span className={`badge risk-${assessment.overall_risk}`}>{assessment.overall_risk} overall risk</span>
+      </header>
+      <ul>
+        {assessment.key_risks.map((item) => (
+          <li key={item.risk}>
+            <span className={`badge risk-${item.severity}`}>{item.severity}</span> {item.risk}{' '}
+            <span className="muted" title={item.citation ? excerpts[item.citation]?.text : undefined}>
+              ({item.citation ?? 'market data'})
+            </span>
+          </li>
+        ))}
+      </ul>
+      <h4>What would change the thesis</h4>
+      <ul>
+        {assessment.what_would_change_the_thesis.map((condition) => (
+          <li key={condition}>{condition}</li>
+        ))}
+      </ul>
+    </article>
+  )
+}
+
+function formatNumber(value: number | null): string {
+  if (value == null) return 'n/a'
+  return Math.abs(value) >= 1e6 ? value.toExponential(3) : String(Number(value.toPrecision(6)))
+}
+
+/** The Data Checker's result: plain code comparing each "field = value" with the market data. */
+function DataCheckSummary({ check }: { check: DataCheck }) {
+  const mismatches = check.checks.filter((c) => c.status === 'mismatch')
+  return (
+    <div className="data-check">
+      <p>
+        <strong>Data check (code, no AI):</strong> {check.matched} of {check.checks.length} data points match the
+        market data
+        {check.mismatched > 0 && `, ${check.mismatched} do not`}
+        {check.unchecked > 0 && `, ${check.unchecked} could not be checked`}.
+      </p>
+      {mismatches.length > 0 && (
+        <ul>
+          {mismatches.map((c) => (
+            <li key={c.data_point}>
+              {c.data_point}: the data has {c.field} = {formatNumber(c.actual)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function AuditorCard({ verdict, dataCheck }: { verdict: AuditorVerdict; dataCheck?: DataCheck }) {
   return (
     <article className={`card card-auditor ${verdict.is_grounded ? 'card-ok' : 'card-warn'}`}>
       <header>
@@ -178,6 +247,7 @@ function AuditorCard({ verdict }: { verdict: AuditorVerdict }) {
         </ul>
       )}
       <p className="muted">{verdict.notes}</p>
+      {dataCheck && dataCheck.checks.length > 0 && <DataCheckSummary check={dataCheck} />}
     </article>
   )
 }

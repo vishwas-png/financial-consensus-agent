@@ -64,3 +64,10 @@ class BagOfWordsEmbedder:
                 vector[0] = 1.0  # avoid all-zero vectors (undefined cosine)
             vectors.append(vector)
         return vectors
+
+
+def low_risk_assessment(call_number: int = 1) -> dict[str, Any]:
+    """A valid Risk Officer answer that cites no excerpts (works with or without filings)."""
+    return {"key_risks": [{"risk": "Valuation multiple leaves little room for error.", "severity": "medium",
+                           "citation": None}],
+            "what_would_change_the_thesis": ["trailing_pe falls below 20"], "overall_risk": "medium"}

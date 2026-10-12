@@ -1,8 +1,8 @@
 # Automated Financial Research & Multi-Agent Consensus Network
 
-Sign in with Google, enter a stock ticker, and watch two AI agents argue about it live. An **Analyst** agent writes an investment thesis from market data and SEC filings; a **Critic** agent challenges it; they loop until they agree or hit a hard iteration cap. An **Auditor** agent (LLM-as-a-Judge) then checks every final claim against the retrieved SEC filing text and flags anything unsupported. All financial reasoning lives in prompts; the code plumbs data in and validated, structured output out.
+Sign in with Google, enter a stock ticker, and watch two AI agents argue about it live. An **Analyst** agent writes an investment thesis from market data and SEC filings; a **Critic** agent challenges it; they loop until they agree or hit a hard iteration cap. A **Risk Officer** agent names what could make the final thesis wrong, and an **Auditor** agent (LLM-as-a-Judge) checks every final claim against the retrieved SEC filing text, next to a code-only **Data Checker** for the numbers. You can also **compare 2-3 companies**: each gets the full treatment, then a **Comparator** agent weighs them side by side. Every run records what it cost (LLM calls, tokens, time per step). All financial reasoning lives in prompts; the code plumbs data in and validated, structured output out.
 
-> Status: **Stages 0-8 complete**: deployed at **https://financial-consensus-agent.vercel.app** (Google sign-in → live Analyst/Critic debate over market data and 10-K excerpts → Auditor fact-check → history). Free hosting: the first request after 15 idle minutes takes about a minute while the server wakes up.
+> Status: **Stages 0-9 complete**: deployed at **https://financial-consensus-agent.vercel.app** (Google sign-in → live Analyst/Critic debate over market data and 10-K excerpts → Risk Officer → Auditor fact-check + Data Checker → history; plus multi-company comparisons and per-run metrics). Free hosting: the first request after 15 idle minutes takes about a minute while the server wakes up.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ flowchart TB
         subgraph CORE["core/ · LangGraph"]
             F[fetch_data] --> A[analyst] --> C[critic] --> K{consensus_check}
             K -- continue --> A
-            K -- "done (agree or cap)" --> AU[auditor]
+            K -- "done (agree or cap)" --> RO[risk_officer] --> AU["auditor + Data Checker"]
         end
         API --> CORE
     end
@@ -101,6 +101,7 @@ python -c "from src.db.session import init_db; init_db()"     # create local DB 
 python -m src.tools.market_data AAPL                          # print a market data snapshot as JSON
 python -m src.core.tool_calling "How is Apple doing?"         # LLM picks the ticker, then fetches data
 python -m src.core.graph AAPL 3                               # live Analyst/Critic debate, max 3 rounds
+python -m src.core.comparison AAPL MSFT                       # live comparison (1 round per company)
 python -m src.rag.retriever AAPL "supply chain risk"          # search the latest 10-K (downloads + indexes it on first use)
 python -m src.rag.ingest path\to\10k.pdf AAPL 2025              # index a 10-K PDF you downloaded yourself
 ```
@@ -114,9 +115,12 @@ python -m evals.run_evals --suite extraction        # request -> ticker (~1 min)
 python -m evals.judge_calibration                   # auditor vs manual labels (~7 min on Groq free tier)
 python -m evals.judge_calibration --repeats 3       # + consistency across repeats
 python -m evals.run_evals --suite pipeline          # full live debates, code-checked (~15 min)
+python -m evals.run_evals --suite data_check        # Data Checker vs manual labels (instant, no LLM)
+python -m evals.run_evals --suite risk              # Risk Officer citations and focus (~2 min)
+python -m evals.run_evals --suite compare_extraction  # comparison request -> tickers (~30 s)
 ```
 
-Latest results (Groq free tier, `gpt-oss-120b`): extraction 4/4 · judge calibration 7/7 (precision 1.00, recall 1.00, claim recall 1.00) · pipeline 3/3 code checks passed, 2/3 forced exits, ~170 s per run. Read the limitations below before trusting the judge score.
+Latest results (Groq free tier, `gpt-oss-120b`): extraction 4/4 · judge calibration 7/7 (precision 1.00, recall 1.00, claim recall 1.00) · pipeline 3/3 code checks passed, 2/3 forced exits, ~170 s per run · Stage 9: data_check 12/12 · risk 2/2 · compare_extraction 4/4. Read the limitations below before trusting the judge score.
 
 Results are printed and saved to `backend/evals/results/` (gitignored). See [docs/DESIGN.md](docs/DESIGN.md#10-evaluation-harness-stage-5).
 
@@ -131,13 +135,14 @@ uvicorn src.main:app --reload            # http://127.0.0.1:8000, interactive do
 | Endpoint | Auth | Purpose |
 |---|---|---|
 | `POST /research` | Bearer | Start a run: `{"query": "How is Apple doing?", "max_iterations": 2}` → `202 {run_id, ticker}` |
-| `GET /research/{id}/stream` | Bearer | Server-Sent Events: `fetch_data`, `analyst`, `critic`, `consensus_check`, `auditor` (or `error`), then `end`. Supports `Last-Event-ID` |
-| `GET /research/{id}` | Bearer | Run status, all events, final output |
+| `POST /compare` | Bearer | Compare 2-3 companies: `{"query": "Apple vs Microsoft"}` → `202 {run_id, ticker: "AAPL vs MSFT"}` |
+| `GET /research/{id}/stream` | Bearer | Server-Sent Events: `fetch_data`, `analyst`, `critic`, `consensus_check`, `risk_officer`, `auditor`, and for comparisons `comparator` (each per-company event carries `ticker`), or `error`, then `end`. Supports `Last-Event-ID` |
+| `GET /research/{id}` | Bearer | Run status, kind (`single`/`compare`), all events, final output, metrics |
 | `GET /history` | Bearer | Your runs, newest first |
 | `GET /me` | Bearer | Your account and quota usage |
 | `GET /health` | none | Liveness check |
 
-Every authenticated call needs `Authorization: Bearer <Google ID token>` (the React frontend in Stage 7 obtains it with Google sign-in). Quota: 1 active run and 5 runs per rolling 24 hours per user.
+Every authenticated call needs `Authorization: Bearer <Google ID token>` (the React frontend in Stage 7 obtains it with Google sign-in). Quota: 1 active run and 5 runs per rolling 24 hours per user; a comparison counts as one run per company.
 
 ### Frontend
 
@@ -186,7 +191,7 @@ Pushing to `main` redeploys both services. Secrets live only in the Render and V
 | 6 | FastAPI: Google auth, quota, persistence, SSE | ✅ Done |
 | 7 | React frontend | ✅ Done |
 | 8 | Deployment + hardening | ✅ Done |
-| 9 | Extensions | Planned |
+| 9 | Extensions: observability, Risk Officer + Data Checker, multi-company comparison | ✅ Done |
 
 ## Honest limitations
 
@@ -202,6 +207,9 @@ Pushing to `main` redeploys both services. Secrets live only in the Render and V
 - Runs execute in a thread pool inside the API process: one at a time when deployed (2 locally). A run in progress is lost (marked failed) if the server restarts or redeploys, and the API must run as a single instance until a real job queue is added.
 - Free hosting: the server sleeps after 15 idle minutes (the next request waits about a minute), and its disk is wiped on every sleep and deploy. A ticker's first run after that re-downloads and re-indexes its 10-K (about 30 s with Cohere).
 - Deployed filing embeddings use Cohere's trial key: filing text is sent to Cohere, and the key allows about 1,000 calls a month (roughly 100 first-time 10-Ks). If indexing takes over 2 minutes or fails, the run continues without 10-K excerpts.
+- The Risk Officer's risks and the Comparator's verdict are LLM output that is **not** audited (the Auditor checks the analyst's thesis only). In a live AAPL vs MSFT test the Comparator stated a wrong derived number (Apple "net cash" instead of net debt); the prompt now requires inputs for derived numbers, and the UI labels the comparison as not fact-checked.
+- The Data Checker only checks `field = value` data points against the market data; prose claims, derived numbers and periods (quarterly vs annual) remain the Auditor's job.
+- A comparison researches companies one after another with 1 debate round each: about 3-4 minutes per company on the free tier.
 - Section splitting is heuristic: for Microsoft's 10-K, "Item 7" currently picks up the wrong text, so MSFT runs get weaker MD&A evidence.
 - The live stream polls the database every 0.5 s (simple and robust, but not built for many concurrent viewers).
 - Sign-in lasts about an hour (Google ID token lifetime, no refresh tokens); after that you sign in again. The token lives in `sessionStorage`, protected by a strict Content-Security-Policy, so an XSS hole would still be serious.
