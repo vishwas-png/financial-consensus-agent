@@ -459,7 +459,7 @@ Stage 8: deployment and hardening.
 ### Next
 Stage 9 (extensions) starts only when the owner says "plan stage 9".
 
-## Stage 9: Extensions (IN PROGRESS)
+## Stage 9: Extensions
 
 ### Approved plan
 Built in order 9a → 9b → 9c on branch `stage/9-extensions`, merged to `main` (which auto-deploys) only after all three are verified.
@@ -540,3 +540,10 @@ Built in order 9a → 9b → 9c on branch `stage/9-extensions`, merged to `main`
   - an AAPL vs MSFT comparison end to end (it exposed the wrong "net cash" number, now fixed in the prompt).
 - **Evals, live:** data_check 12/12, risk 2/2, compare_extraction 4/4.
 - **CI on `stage/9-extensions`:** passed after the backend commits (backend with Postgres migrations, frontend, docker-image).
+- **Deployed and smoke-tested by the owner on the live site:**
+  - a single AAPL run (Risk Officer card, Run details: 110 s, 10-K indexed in 13.7 s via Cohere);
+  - an AAPL vs MSFT comparison ("prefers AAPL").
+  - One layout bug in the History row was found and fixed.
+
+### Status
+All planned stages (0-9) are complete. Known limitations are in the README; the DEVLOG (local) has every failure.
