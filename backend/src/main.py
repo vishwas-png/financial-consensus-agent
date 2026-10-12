@@ -48,11 +48,20 @@ def extract_ticker_with_llm(query: str) -> str:
     return extract_ticker(query, GroqClient()).ticker
 
 
+def extract_tickers_with_llm(query: str) -> list[str]:
+    """Default comparison extractor (Stage 9): 2-3 tickers from one request."""
+    from src.clients.groq_client import GroqClient
+    from src.core.tool_calling import extract_tickers
+
+    return extract_tickers(query, GroqClient())
+
+
 def create_app(
     session_factory: sessionmaker = SessionLocal,
     token_verifier: TokenVerifier = verify_google_token,
     worker: RunWorker | None = None,
     ticker_extractor: Callable[[str], str] = extract_ticker_with_llm,
+    tickers_extractor: Callable[[str], list[str]] = extract_tickers_with_llm,
     stream_poll_seconds: float = STREAM_POLL_SECONDS,
     stream_max_seconds: float = STREAM_MAX_SECONDS,
     frontend_origins: list[str] | None = None,
@@ -85,6 +94,7 @@ def create_app(
     app.state.token_verifier = token_verifier
     app.state.worker = worker
     app.state.ticker_extractor = ticker_extractor
+    app.state.tickers_extractor = tickers_extractor
     app.state.stream_poll_seconds = stream_poll_seconds
     app.state.stream_max_seconds = stream_max_seconds
 
