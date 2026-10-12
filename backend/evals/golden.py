@@ -76,6 +76,16 @@ class RiskCase(BaseModel):
     notes: str
 
 
+class CompareExtractionCase(BaseModel):
+    """Comparison request -> expected 2-3 tickers, in order. None means it must be declined."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    request: str
+    expected_tickers: list[str] | None
+    notes: str
+
+
 class GoldenSet(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: int
@@ -84,6 +94,7 @@ class GoldenSet(BaseModel):
     pipeline_cases: list[PipelineCase]
     data_check_cases: list[DataCheckCase] = Field(default_factory=list)   # Stage 9
     risk_cases: list[RiskCase] = Field(default_factory=list)              # Stage 9
+    compare_extraction_cases: list[CompareExtractionCase] = Field(default_factory=list)   # Stage 9
 
     def judge_case(self, case_id: str) -> JudgeCase:
         return next(case for case in self.judge_cases if case.id == case_id)

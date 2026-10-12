@@ -11,7 +11,15 @@ from typing import Any
 
 import yfinance as yf
 
-from evals.golden import DataCheckCase, ExtractionCase, JudgeCase, PipelineCase, RiskCase, load_fixture
+from evals.golden import (
+    CompareExtractionCase,
+    DataCheckCase,
+    ExtractionCase,
+    JudgeCase,
+    PipelineCase,
+    RiskCase,
+    load_fixture,
+)
 from evals.metrics import claim_hit, pipeline_checks
 from src.clients.groq_client import GroqClient, LLMError
 from src.core.data_checker import check_data_point, known_values
@@ -23,7 +31,7 @@ from src.core.nodes.fetch_data import FilingRetriever, default_filing_retriever
 from src.core.schemas import AnalystOutput, CriticFeedback
 from src.core.state import GraphState
 from src.core.structured_output import ToolCallError
-from src.core.tool_calling import extract_ticker
+from src.core.tool_calling import NoUSListingError, extract_ticker, extract_tickers
 from src.tools.market_data import MarketDataError, fetch_market_data
 
 
@@ -69,6 +77,16 @@ class PipelineResult:
     @property
     def passed(self) -> bool:
         return self.error is None and bool(self.checks) and all(self.checks.values())
+
+
+@dataclass
+class CompareExtractionResult:
+    case_id: str
+    expected: list[str] | None
+    got: list[str] | None
+    error: str | None
+    passed: bool
+    seconds: float
 
 
 @dataclass
@@ -217,3 +235,20 @@ def run_risk_case(case: RiskCase, analysis: AnalystOutput, client: GroqClient) -
     }
     return RiskResult(case.id, checks, assessment.overall_risk, [r.risk for r in assessment.key_risks],
                       None, time.monotonic() - start)
+
+
+# ---------- Comparison extraction (Stage 9, live) ----------
+
+def run_compare_extraction_case(case: CompareExtractionCase, client: GroqClient) -> CompareExtractionResult:
+    """expected_tickers set: exact list, in order. None: the request must be declined (NoUSListingError)."""
+    start = time.monotonic()
+    try:
+        got = extract_tickers(case.request, client)
+    except NoUSListingError as exc:
+        return CompareExtractionResult(case.id, case.expected_tickers, None, f"NoUSListingError: {exc}",
+                                       case.expected_tickers is None, time.monotonic() - start)
+    except (ToolCallError, LLMError) as exc:
+        return CompareExtractionResult(case.id, case.expected_tickers, None, f"{type(exc).__name__}: {exc}",
+                                       False, time.monotonic() - start)
+    return CompareExtractionResult(case.id, case.expected_tickers, got, None, got == case.expected_tickers,
+                                   time.monotonic() - start)

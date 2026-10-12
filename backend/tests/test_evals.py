@@ -315,3 +315,20 @@ def test_risk_case_checks_with_a_fake_client() -> None:
     off_topic = good | {"key_risks": [{"risk": "Weather.", "severity": "low", "citation": None}]}
     result = run_risk_case(case, analysis, ToolRoutingClient({RISK_OFFICER_TOOL_NAME: lambda n: off_topic}))
     assert result.checks == {"citations_valid": True, "cites_the_filing": False, "on_topic": False}
+
+
+def test_compare_extraction_cases_with_a_fake_client() -> None:
+    from evals.runner import run_compare_extraction_case
+    from src.core.tool_calling import COMPARISON_TOOL_NAME
+
+    by_id = {case.id: case for case in GOLDEN.compare_extraction_cases}
+    right = ToolRoutingClient({COMPARISON_TOOL_NAME: lambda n: {"tickers": ["AAPL", "MSFT"]}})
+    assert run_compare_extraction_case(by_id["compare-two-names"], right).passed
+
+    reversed_order = ToolRoutingClient({COMPARISON_TOOL_NAME: lambda n: {"tickers": ["MSFT", "AAPL"]}})
+    assert not run_compare_extraction_case(by_id["compare-two-names"], reversed_order).passed
+
+    declines = ToolRoutingClient({COMPARISON_TOOL_NAME: lambda n: {"no_us_listing": True}})
+    assert run_compare_extraction_case(by_id["compare-foreign"], declines).passed
+    invents = ToolRoutingClient({COMPARISON_TOOL_NAME: lambda n: {"tickers": ["AAPL", "RIL"]}})
+    assert not run_compare_extraction_case(by_id["compare-foreign"], invents).passed

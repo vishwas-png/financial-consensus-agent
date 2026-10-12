@@ -321,5 +321,41 @@
    ],
    "notes": "Unresolved objection about growth: it should surface as a risk or a thesis-changing condition."
   }
+ ],
+ "compare_extraction_cases": [
+  {
+   "id": "compare-two-names",
+   "request": "Apple vs Microsoft",
+   "expected_tickers": [
+    "AAPL",
+    "MSFT"
+   ],
+   "notes": "Plain 'vs' between two company names."
+  },
+  {
+   "id": "compare-three-names",
+   "request": "Compare Coca-Cola, PepsiCo and Keurig Dr Pepper",
+   "expected_tickers": [
+    "KO",
+    "PEP",
+    "KDP"
+   ],
+   "notes": "Three companies, in the order given."
+  },
+  {
+   "id": "compare-class-share",
+   "request": "Berkshire Hathaway class B or JPMorgan?",
+   "expected_tickers": [
+    "BRK-B",
+    "JPM"
+   ],
+   "notes": "Class share needs the hyphen form."
+  },
+  {
+   "id": "compare-foreign",
+   "request": "Apple vs Reliance Industries",
+   "expected_tickers": null,
+   "notes": "Reliance has no US listing: the whole request must be declined, not given an invented ticker."
+  }
  ]
 }
