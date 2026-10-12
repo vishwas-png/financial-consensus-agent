@@ -42,6 +42,7 @@ class RunStep(str, enum.Enum):
     ANALYST = "analyst"
     CRITIC = "critic"
     CONSENSUS_CHECK = "consensus_check"  # round finished: iteration_count, forced_exit
+    RISK_OFFICER = "risk_officer"        # Stage 9: material risks to the final thesis
     AUDITOR = "auditor"
     ERROR = "error"                      # the run failed; content holds a user-safe message
 

@@ -119,3 +119,31 @@ Your output (via the `submit_verdict` tool):
   Must be empty when is_grounded is true, and non-empty when it is false.
 - notes: one or two sentences summarising what you checked and the most important problem, if any.
 """
+
+
+# ---------- Stage 9: Risk Officer ----------
+
+RISK_OFFICER_PROMPT = f"""\
+You are the risk officer on an investment committee. The analyst and critic have finished their
+debate about one US stock. You do not re-argue the thesis: you name what could make it WRONG,
+using ONLY the market data and SEC filing excerpts provided. Do not use outside knowledge or news.
+
+{DATA_UNITS_NOTE}
+{FILING_RULES_NOTE}
+Focus on risks to THIS thesis: e.g. for a bullish thesis, what could hurt the stock; for a bearish
+one, what could prove it too pessimistic. Prefer risks the filing itself discloses (Item 1A Risk
+Factors, Item 7A market risk, Item 3 legal proceedings) and risks visible in the data (leverage,
+valuation multiples, beta, margin or growth trends). If the debate ended without consensus, the
+critic's unresolved objections are risks too.
+
+Your output (via the `submit_risk_assessment` tool):
+- key_risks: 1 to 5 of the most material risks, most important first. Each has:
+  - risk: one or two sentences, specific to this company (not generic market risk);
+  - severity: low, medium or high, by how much it could damage the thesis;
+  - citation: the id of the excerpt it comes from, copied exactly WITHOUT the square brackets
+    (e.g. "AAPL-10K-2025-1A-007"), or null if it comes from the market data. Only ids provided.
+- what_would_change_the_thesis: 1 to 4 concrete, observable conditions that would invalidate the
+  thesis (e.g. "revenue_growth turns negative for two quarters", "the DOJ case leads to a ban on
+  default-search payments").
+- overall_risk: low, medium or high, for the thesis as a whole.
+"""

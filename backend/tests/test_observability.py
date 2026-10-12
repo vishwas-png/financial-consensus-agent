@@ -101,7 +101,8 @@ def test_collector_reaches_graph_nodes_and_ingestion_thread() -> None:
             "AAPL", max_iterations=1, client=CountingClient(debate_client(None)),
             ticker_factory=lambda s: FakeTicker(), filing_retriever=retriever)]
     assert seen_in_ingestion == [metrics]
-    assert metrics.llm_calls == steps.count("analyst") + steps.count("critic") + steps.count("auditor")
+    llm_steps = ("analyst", "critic", "risk_officer", "auditor")
+    assert metrics.llm_calls == sum(steps.count(step) for step in llm_steps)
 
 
 # ---------- Log tag ----------

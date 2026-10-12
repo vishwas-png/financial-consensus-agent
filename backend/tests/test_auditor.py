@@ -79,10 +79,12 @@ def test_inconsistent_verdicts_rejected(verdict: AuditorVerdict) -> None:
 
 # ---------- Node ----------
 
-def test_node_returns_only_auditor_verdict() -> None:
+def test_node_returns_verdict_and_data_check() -> None:
     client = ToolRoutingClient({AUDITOR_TOOL_NAME: lambda n: UNGROUNDED})
     update = make_auditor_node(client)(state())
-    assert update == {"auditor_verdict": UNGROUNDED}
+    assert set(update) == {"auditor_verdict", "data_check"}
+    assert update["auditor_verdict"] == UNGROUNDED
+    assert len(update["data_check"].checks) == len(state().analyst_output.supporting_data_points)
     assert client.calls[0]["model"] == REASONING_MODEL
 
 

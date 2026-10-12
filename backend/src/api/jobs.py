@@ -72,6 +72,8 @@ def final_output(state: GraphState) -> dict[str, Any]:
         "analyst_output": _jsonable(state.analyst_output),
         "critic_feedback": _jsonable(state.critic_feedback),
         "auditor_verdict": _jsonable(state.auditor_verdict),
+        "risk_assessment": _jsonable(state.risk_assessment),
+        "data_check": _jsonable(state.data_check),
         "filing_chunks": state.filing_chunks,
         "market_snapshot": {key: raw.get(key) for key in ("profile", "price", "valuation", "financials")},
     }

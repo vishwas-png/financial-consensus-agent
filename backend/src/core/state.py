@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from src.config import MAX_ITERATIONS
-from src.core.schemas import AnalystOutput, AuditorVerdict, CriticFeedback
+from src.core.schemas import AnalystOutput, AuditorVerdict, CriticFeedback, DataCheck, RiskAssessment
 
 
 class GraphState(BaseModel):
@@ -29,6 +29,8 @@ class GraphState(BaseModel):
     analyst_output: AnalystOutput | None = None
     critic_feedback: CriticFeedback | None = None
     auditor_verdict: AuditorVerdict | None = None
+    risk_assessment: RiskAssessment | None = None   # Risk Officer (Stage 9)
+    data_check: DataCheck | None = None             # Data Checker, code only (Stage 9)
 
     # Guardrail: completed Analyst/Critic rounds, and the max number of rounds in total
     iteration_count: int = Field(default=0, ge=0)

@@ -46,6 +46,46 @@ class AuditorVerdict(BaseModel):
     notes: str
 
 
+class RiskItem(BaseModel):
+    """One material risk to the thesis, as judged by the Risk Officer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    risk: str
+    severity: Literal["low", "medium", "high"]
+    # Excerpt id the risk comes from (no brackets), or null when it comes from the market data
+    citation: str | None = None
+
+
+class RiskAssessment(BaseModel):
+    """The Risk Officer's review of the final thesis (Stage 9)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key_risks: list[RiskItem] = Field(min_length=1, max_length=5)
+    what_would_change_the_thesis: list[str] = Field(min_length=1, max_length=4)
+    overall_risk: Literal["low", "medium", "high"]
+
+
+class DataPointCheck(BaseModel):
+    """Code check of one analyst data point ("field = value") against the market data."""
+
+    data_point: str
+    field: str | None = None
+    claimed: float | None = None
+    actual: float | None = None   # the closest value found for that field
+    status: Literal["match", "mismatch", "unknown_field", "not_checkable"]
+
+
+class DataCheck(BaseModel):
+    """Result of the Data Checker (no LLM) for the final analysis."""
+
+    checks: list[DataPointCheck]
+    matched: int
+    mismatched: int
+    unchecked: int
+
+
 class MarketDataToolInput(BaseModel):
     """Arguments for the market-data tool call. The LLM fills this in; we validate it."""
 
