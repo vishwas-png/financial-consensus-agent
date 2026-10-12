@@ -436,3 +436,76 @@ Each entry: the choice, the alternatives considered, and the trade-off.
   3. **Idle transactions:** a request session held a transaction open for a whole SSE stream, and Neon terminated it.
      - Reads now commit as soon as they're done (`expire_on_commit=False` keeps objects usable).
 - **Trade-off:** more code at the boundaries. Each piece has a test that was shown to fail without it.
+
+## Stage 9: Extensions
+
+### D64. Per-run metrics through context variables
+- **Alternatives:**
+  - passing a metrics object through every function;
+  - LangSmith or OpenTelemetry;
+  - parsing the logs afterwards.
+- **Why:**
+  - The worker opens a `RunMetrics` collector and makes it "current" with a `ContextVar`. The Groq client, embedders and ingestion report to it when one is active, so `core/` stays user- and run-agnostic and no signatures change.
+  - LangGraph runs nodes with a copy of the caller's context, and `fetch_data` submits ingestion with `copy_context()`. A test proves both see the collector.
+  - Metrics are numbers only: step durations, LLM calls, retries, tokens, embedding calls and ingestion timing. They are saved for failed runs too, which still cost tokens.
+  - The same context adds ` [run=<id8>]` to log lines.
+- **Trade-off:** context variables are implicit. Code outside a run (CLI, evals) records nothing, by design. No external tracing service, so there are no dashboards across runs.
+
+### D65. Risk Officer as a separate LLM role after the debate
+- **Alternatives:**
+  - make the critic list risks;
+  - a parallel "bear" analyst during the debate.
+- **Why:**
+  - The critic's job is to challenge the thesis until it holds up; the risk officer's is to name what could still make the final thesis wrong.
+  - It runs once, after consensus or a forced exit, so it costs one extra call (about 30–40 s on the free tier).
+  - It sees the unresolved objections when there was no consensus.
+  - Its citations are validated like the analyst's.
+- **Trade-off:** its output is not audited; the Auditor still checks only the analyst's thesis. For a bearish thesis, its "risks" are reasons the thesis could be too pessimistic. That is intended, but can surprise a reader.
+
+### D66. Data Checker in code, shown next to the Auditor, not fed into it
+- **Alternatives:**
+  - feed code-verified numbers into the Auditor prompt;
+  - leave numeric checks to the LLM.
+- **Why:**
+  - Stage 5 showed that the Auditor's false alarms come from its own arithmetic and unit mistakes.
+  - A deterministic lookup of `field = value` data points is cheap and exact.
+  - Keeping it out of the prompt keeps judge calibration (D33–D35) comparable.
+  - It is strict where scale errors happen: `_pct` fields are already percentages, and only true fraction fields may be written as `%`. Each written reading has its own rounding tolerance.
+- **Trade-off:** it can't check prose claims, derived numbers or periods. About 1 in 10 data points in a live AAPL run was "not checkable".
+
+### D67. Comparison = the same graph per ticker, then one Comparator call
+- **Alternatives:**
+  - one big multi-ticker graph;
+  - running tickers in parallel;
+  - a comparator that sees every excerpt.
+- **Why:**
+  - Reusing the single-ticker graph means every company gets the same debate, risk check and audit, with no new loop logic.
+  - Tickers run one after another, because Groq's free tier allows about 8k tokens a minute and parallel runs would only wait on rate limits.
+  - Each company gets 1 round, to bound time and cost.
+  - The Comparator sees compact briefs: no price history, and only excerpts someone cited, shortened to 400 characters. This keeps a 3-company prompt well under the per-minute budget.
+- **Trade-offs:**
+  - about 3–4 minutes per company;
+  - the comparison itself isn't audited, and the UI says so;
+  - a live run produced a wrong derived number (see DEVLOG), so the prompt now requires the inputs of any derived number.
+
+### D68. One run row per comparison, costing one quota unit per ticker
+- **Alternatives:** one run row per ticker grouped by a parent id; a comparison costing 1.
+- **Why:**
+  - One row keeps streaming, history, expiry and the worker unchanged. `kind`, `tickers` and `units` columns describe it.
+  - The daily quota sums `units`.
+  - The quota check runs before extraction (minimum 2) and again with the real N under the row lock (D56).
+  - Run timeout and stuck-run expiry scale with N.
+- **Trade-off:** per-ticker results live inside `final_output.per_ticker` rather than in their own rows, so they can't be queried individually.
+
+### D69. Comparison events are tagged, and the UI reuses the single-run reducer
+- **Alternatives:** a separate event schema and renderer for comparisons.
+- **Why:**
+  - The worker adds `ticker` to each per-company event's content.
+  - `compareReducer` routes events by that tag into the existing `runReducer`, so each company tab renders exactly like a single run, including replay and reconnect.
+  - The "Comparison" verdict is a separate card.
+- **Trade-off:** event content is no longer purely what the graph returned; the tag is added by the API layer, not by `core/`.
+
+### D70. Comparison extraction must decline foreign companies as a whole
+- **Alternatives:** drop the foreign company and compare the rest.
+- **Why:** silently comparing a different set than the user asked for is worse than a clear 422. It uses the same `no_us_listing` escape hatch as single runs (D59). Duplicates are removed, and fewer than 2 distinct tickers triggers the repair attempt.
+- **Trade-off:** the user must rephrase without the foreign company.
