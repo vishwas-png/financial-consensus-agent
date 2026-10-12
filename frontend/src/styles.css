@@ -140,3 +140,4 @@ button { font: inherit; cursor: pointer; }
 .card-comparison { border-left: 4px solid var(--accent); }
 .card-comparison .per-ticker { list-style: none; padding-left: 0; }
 .card-comparison .per-ticker li { margin: 6px 0; }
+.badge-kind { margin-left: 8px; }

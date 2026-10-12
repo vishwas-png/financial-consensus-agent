@@ -40,8 +40,11 @@ export function HistoryPage() {
           {runs.map((run) => (
             <li key={run.id}>
               <Link to={`/runs/${run.id}`} className="history-row">
-                <span className="ticker">{run.ticker}</span>
-                {run.kind === 'compare' && <span className="badge">comparison</span>}
+                {/* one grid cell: the row is a 4-column grid (name, status, outcome, time) */}
+                <span>
+                  <span className="ticker">{run.ticker}</span>
+                  {run.kind === 'compare' && <span className="badge badge-kind">comparison</span>}
+                </span>
                 <span className={`badge badge-status-${run.status}`}>{run.status}</span>
                 {/* comparisons arrive as plain text ("prefers MSFT"), single runs as a code */}
                 {run.outcome && <span className="muted">{OUTCOME_LABEL[run.outcome] ?? run.outcome}</span>}
