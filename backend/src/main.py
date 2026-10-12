@@ -21,6 +21,7 @@ from src.api.routes_research import router as research_router
 from src.config import FRONTEND_ORIGINS, IS_PRODUCTION, production_config_problems
 from src.db.models import Base, mark_stale_runs_failed
 from src.db.session import SessionLocal
+from src.observability import RunIdLogFilter
 
 STREAM_POLL_SECONDS = 0.5
 STREAM_MAX_SECONDS = 30 * 60  # a run that hasn't finished after 30 minutes is treated as stuck
@@ -30,7 +31,10 @@ logger = logging.getLogger(__name__)
 
 def configure_logging() -> None:
     """One readable log format; quiet noisy libraries."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s%(run_tag)s: %(message)s")
+    # Tag lines written during a research run with " [run=<id>]" (see observability.py)
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RunIdLogFilter())
     # yfinance logs "HTTP Error 404 ... possibly delisted" at ERROR for unknown tickers,
     # which we already handle (TickerNotFoundError); keep only its critical messages.
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)

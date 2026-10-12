@@ -380,3 +380,10 @@ def test_company_without_us_listing_is_a_clear_422() -> None:
         assert response.status_code == 422
         assert "doesn't appear to have a US stock listing" in response.json()["detail"]
         assert client.get("/history", headers=ALICE).json() == []  # no run, no quota used
+
+
+def test_run_detail_includes_metrics(client: TestClient) -> None:
+    run_id = start(client, ALICE).json()["run_id"]
+    detail = client.get(f"/research/{run_id}", headers=ALICE).json()
+    assert [step["step"] for step in detail["metrics"]["steps"]][0] == "fetch_data"
+    assert set(detail["metrics"]) >= {"llm_calls", "prompt_tokens", "completion_tokens", "steps", "total_seconds"}

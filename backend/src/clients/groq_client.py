@@ -15,6 +15,7 @@ from typing import Any
 import groq
 
 from src.config import GROQ_API_KEY
+from src.observability import current_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,7 @@ class GroqClient:
         for attempt in range(1, self.max_attempts + 1):
             try:
                 response = self._sdk.chat.completions.create(**request)
+                _record_usage(model, response)
                 return response.choices[0].message
             except groq.BadRequestError as error:
                 malformed = _tool_use_failed(error)
@@ -150,8 +152,25 @@ class GroqClient:
                     "Groq %s (cause: %s) on attempt %d/%d; retrying in %.1fs",
                     type(error).__name__, cause, attempt, self.max_attempts, delay,
                 )
+                metrics = current_metrics()
+                if metrics is not None:
+                    metrics.add_llm_retry()
                 self._sleep(delay)
             except groq.APIStatusError as error:  # e.g. 404 unknown model (after the retryable ones)
                 raise LLMError(f"Groq HTTP {error.status_code}: {error}") from error
 
         raise AssertionError("unreachable")  # the loop always returns or raises
+
+
+def _record_usage(model: str, response: Any) -> None:
+    """Report token usage to the current run's metrics (no-op outside a run)."""
+    metrics = current_metrics()
+    if metrics is None:
+        return
+    usage = getattr(response, "usage", None)
+    metrics.add_llm_call(
+        model,
+        prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+        completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+        retries=0,  # retries are counted as they happen (add_llm_retry)
+    )

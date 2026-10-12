@@ -71,6 +71,7 @@ class RunDetail(BaseModel):
     status: str
     created_at: datetime
     final_output: dict[str, Any] | None
+    metrics: dict[str, Any] | None = None   # step durations, LLM calls/tokens/retries (Stage 9)
     events: list[EventOut]
 
 
@@ -142,7 +143,7 @@ def get_research(run_id: str, user: User = Depends(get_current_user), db: Sessio
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     events = get_events_for_run(db, user.id, run_id)
     return RunDetail(id=run.id, ticker=run.ticker, status=run.status.value, created_at=run.created_at,
-                     final_output=run.final_output, events=[_event_out(e) for e in events])
+                     final_output=run.final_output, metrics=run.metrics, events=[_event_out(e) for e in events])
 
 
 def _sse(event: str, data: dict[str, Any], event_id: int | None = None) -> str:

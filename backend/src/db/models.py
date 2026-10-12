@@ -72,6 +72,8 @@ class ResearchRun(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     final_output: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Observability (Stage 9): step durations, LLM calls/tokens/retries, embedding calls
+    metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     user: Mapped[User] = relationship(back_populates="runs")
     events: Mapped[list["RunEvent"]] = relationship(

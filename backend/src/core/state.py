@@ -21,6 +21,9 @@ class GraphState(BaseModel):
     # Filled by fetch_data
     raw_data: dict[str, Any] = Field(default_factory=dict)
     filing_chunks: list[str] = Field(default_factory=list)
+    # Why there are (or aren't) excerpts: "found", "empty" (no indexed filing text),
+    # "unavailable" (EDGAR/embedding error), "timeout" (ingestion over the time limit)
+    filing_status: str = "empty"
 
     # Filled by the agents (None until that node has run)
     analyst_output: AnalystOutput | None = None

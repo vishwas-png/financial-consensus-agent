@@ -29,7 +29,7 @@ RAW = {"profile": {"name": "Apple Inc.", "currency": "USD"}, "price": {"current"
 
 def fake_graph(ticker: str, max_iterations: int = 3) -> Iterator[tuple[str, dict[str, Any]]]:
     """One round ending in a forced exit (max_iterations=1), then the auditor."""
-    yield "fetch_data", {"raw_data": RAW, "filing_chunks": [CHUNK]}
+    yield "fetch_data", {"raw_data": RAW, "filing_chunks": [CHUNK], "filing_status": "found"}
     yield "analyst", {"analyst_output": ANALYSIS}
     yield "critic", {"critic_feedback": DISAGREE}
     yield "consensus_check", {"iteration_count": 1, "forced_exit": True}
@@ -79,7 +79,7 @@ def test_successful_run_saves_every_step_and_final_output(session_factory: sessi
                                         RunStep.CONSENSUS_CHECK, RunStep.AUDITOR]
     # fetch_data is a summary, not the full data
     assert events[0].content == {"company": "Apple Inc.", "price": 336.9, "currency": "USD",
-                                 "filing_excerpts": 1, "filing_ids": ["AAPL-10K-2025-1A-003"]}
+                                 "filing_excerpts": 1, "filing_status": "found", "filing_ids": ["AAPL-10K-2025-1A-003"]}
     assert events[1].content["analyst_output"]["thesis"] == "Fairly valued."
     assert events[3].content == {"iteration_count": 1, "forced_exit": True}
 
@@ -251,3 +251,27 @@ def test_worker_holds_no_transaction_open_during_a_step() -> None:
     RunWorker(recording_factory, run_graph=graph, executor=InlineExecutor()).submit(run_id, "AAPL", 1)  # type: ignore[arg-type]
     assert load(base, run_id)[0].status == RunStatus.DONE
     assert open_during_steps == [False] * 5
+
+
+# ---------- Metrics (Stage 9) ----------
+
+def test_successful_run_saves_step_metrics(session_factory: sessionmaker) -> None:
+    run_id = new_run(session_factory)
+    RunWorker(session_factory, run_graph=fake_graph, executor=InlineExecutor()).submit(run_id, "AAPL", 1)
+    run, _ = load(session_factory, run_id)
+    assert [step["step"] for step in run.metrics["steps"]] == [
+        "fetch_data", "analyst", "critic", "consensus_check", "auditor"]
+    assert run.metrics["total_seconds"] is not None
+    assert run.metrics["llm_calls"] == 0  # the fake graph makes no real Groq calls
+
+
+def test_failed_run_still_saves_metrics(session_factory: sessionmaker) -> None:
+    def failing_after_one_step(ticker: str, max_iterations: int = 3) -> Iterator[tuple[str, dict[str, Any]]]:
+        yield "fetch_data", {"raw_data": RAW, "filing_chunks": [], "filing_status": "empty"}
+        raise LLMUnavailableError("429")
+
+    run_id = new_run(session_factory)
+    RunWorker(session_factory, run_graph=failing_after_one_step, executor=InlineExecutor()).submit(run_id, "AAPL", 1)
+    run, _ = load(session_factory, run_id)
+    assert run.status == RunStatus.FAILED
+    assert [step["step"] for step in run.metrics["steps"]] == ["fetch_data"]

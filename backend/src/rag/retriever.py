@@ -19,6 +19,7 @@ import chromadb
 from src.config import CHROMA_DIR, TOP_K_CHUNKS
 from src.rag.edgar import EdgarClient
 from src.rag.embeddings import Embedder, collection_suffix, embed_query, make_embedder
+from src.observability import current_metrics
 from src.rag.ingest import Chunk, FilingInfo, build_chunks, extract_text_from_html
 
 logger = logging.getLogger(__name__)
@@ -127,9 +128,17 @@ def ingest_latest_from_edgar(ticker: str, store: FilingStore, edgar: EdgarClient
     chunks = build_chunks(text, info, store.embedder)
     chunked = time.monotonic()
     count = store.add_chunks(chunks)
+    finished = time.monotonic()
     logger.info("Indexed %d chunks from %s %s (%s): download %.0fs, parse %.0fs, chunk %.0fs, embed+store %.0fs",
                 count, ticker, form_type, ref.accession, downloaded - started, parsed - downloaded,
-                chunked - parsed, time.monotonic() - chunked)
+                chunked - parsed, finished - chunked)
+    metrics = current_metrics()
+    if metrics is not None:
+        metrics.set_filing_ingest(
+            ticker=ticker, chunks=count, total_seconds=round(finished - started, 1),
+            download_seconds=round(downloaded - started, 1), parse_seconds=round(parsed - downloaded, 1),
+            chunk_seconds=round(chunked - parsed, 1), embed_seconds=round(finished - chunked, 1),
+        )
     return store.latest_filing(ticker, form_type) or {}
 
 

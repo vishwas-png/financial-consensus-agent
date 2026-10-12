@@ -28,6 +28,7 @@ from src.core.graph import stream_research
 from src.core.state import GraphState
 from src.core.structured_output import ToolCallError
 from src.db.models import ResearchRun, RunEvent, RunStatus, RunStep
+from src.observability import RunMetrics, Stopwatch, run_context
 from src.tools.market_data import DataSourceError, MarketDataError, TickerNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ def event_content(node: str, update: dict[str, Any]) -> dict[str, Any]:
             "price": raw.get("price", {}).get("current"),
             "currency": raw.get("profile", {}).get("currency"),
             "filing_excerpts": len(chunks),
+            "filing_status": update.get("filing_status"),
             "filing_ids": [chunk.split("]")[0].lstrip("[") for chunk in chunks],
         }
     return {key: _jsonable(value) for key, value in update.items()}
@@ -125,35 +127,39 @@ class RunWorker:
         return self._executor.submit(self.execute, run_id, ticker, max_iterations)
 
     def execute(self, run_id: str, ticker: str, max_iterations: int) -> None:
-        """Run the graph for one research run, saving each step. Never raises."""
-        with self._session_factory() as db:
+        """Run the graph for one research run, saving each step and the run's metrics. Never raises."""
+        metrics = RunMetrics()
+        with run_context(run_id, metrics), self._session_factory() as db:
             run = db.get(ResearchRun, run_id)
             if run is None:
                 logger.error("Run %s vanished before it started", run_id)
                 return
             run.status = RunStatus.RUNNING
             db.commit()
-            started = time.monotonic()
+            clock = Stopwatch()
             logger.info("Run %s started: %s, max_iterations=%d", run_id, ticker, max_iterations)
             try:
-                state = self._stream_and_save(db, run_id, ticker, max_iterations)
+                state = self._stream_and_save(db, run_id, ticker, max_iterations, metrics)
                 run.final_output = final_output(state)
+                run.metrics = metrics.as_dict(clock.seconds())
                 run.status = RunStatus.DONE
                 db.commit()
-                logger.info("Run %s done in %.0fs: rounds=%d forced_exit=%s", run_id,
-                            time.monotonic() - started, state.iteration_count, state.forced_exit)
+                logger.info("Run %s done in %.0fs: rounds=%d forced_exit=%s llm_calls=%d tokens=%d",
+                            run_id, clock.seconds(), state.iteration_count, state.forced_exit,
+                            metrics.llm_calls, metrics.prompt_tokens + metrics.completion_tokens)
             except Exception as error:  # the job must always end in a recorded state
-                logger.exception("Run %s (%s) failed after %.0fs", run_id, ticker, time.monotonic() - started)
+                logger.exception("Run %s (%s) failed after %.0fs", run_id, ticker, clock.seconds())
                 db.rollback()
                 db.refresh(run)
-                if run.status == RunStatus.FAILED:
-                    return  # already expired by the API (see expire_stuck_runs); it has its error event
-                db.add(RunEvent(run_id=run_id, step=RunStep.ERROR,
-                                content={"message": user_message(error, ticker), "type": type(error).__name__}))
-                run.status = RunStatus.FAILED
+                run.metrics = metrics.as_dict(clock.seconds())  # failed runs cost tokens too
+                if run.status != RunStatus.FAILED:  # FAILED already = expired by the API, with its event
+                    db.add(RunEvent(run_id=run_id, step=RunStep.ERROR,
+                                    content={"message": user_message(error, ticker), "type": type(error).__name__}))
+                    run.status = RunStatus.FAILED
                 db.commit()
 
-    def _stream_and_save(self, db: Session, run_id: str, ticker: str, max_iterations: int) -> GraphState:
+    def _stream_and_save(self, db: Session, run_id: str, ticker: str, max_iterations: int,
+                         metrics: RunMetrics) -> GraphState:
         """Save one event per graph step and rebuild the final state from the updates.
 
         The deadline is checked between steps, because a thread can't be killed mid-call.
@@ -164,8 +170,10 @@ class RunWorker:
         deadline = self._clock() + self._run_timeout
         state = GraphState(ticker=ticker, max_iterations=max_iterations)
         steps = self._run_graph(ticker, max_iterations=max_iterations)
+        step_clock = Stopwatch()
         try:
             for node, update in steps:
+                metrics.add_step(node, step_clock.seconds())  # time from the previous step to this one
                 state = state.model_copy(update=update)
                 db.add(RunEvent(run_id=run_id, step=RunStep(node), content=event_content(node, update)))
                 db.commit()  # commit per step so the stream can show it immediately
@@ -176,6 +184,7 @@ class RunWorker:
                 if expired:
                     # The API expired this run while a slow step was running; don't revive it
                     raise RunTimeoutError("Run was expired while a step was still running")
+                step_clock = Stopwatch()
         finally:
             close = getattr(steps, "close", None)
             if close is not None:
