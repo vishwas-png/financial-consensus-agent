@@ -77,4 +77,24 @@ describe('RunView', () => {
     render(<RunView ticker="AAPL" state={stateFrom([FETCH])} />)
     expect(screen.queryByText(/market data only/)).not.toBeInTheDocument()
   })
+
+  it('shows the Risk Officer and the data check next to the auditor', () => {
+    render(<RunView ticker="AAPL" state={stateFrom(FORCED_EXIT_EVENTS, 'done')} />)
+    const risk = screen.getByRole('heading', { name: 'Risk Officer' }).closest('article')!
+    expect(within(risk).getByText('medium overall risk')).toBeInTheDocument()
+    expect(within(risk).getByText(/Single-source suppliers/)).toBeInTheDocument()
+    expect(within(risk).getByText('(AAPL-10K-2025-1A-023)')).toBeInTheDocument()
+    expect(within(risk).getByText('(market data)')).toBeInTheDocument()
+    expect(within(risk).getByText('revenue_growth turns negative')).toBeInTheDocument()
+
+    const auditor = screen.getByRole('heading', { name: 'Auditor (fact check)' }).closest('article')!
+    expect(within(auditor).getByText(/1 of 3 data points match the market data, 1 do not, 1 could not be checked/)).toBeInTheDocument()
+    expect(within(auditor).getByText('revenue_growth = 16.4%: the data has revenue_growth = 0.079')).toBeInTheDocument()
+  })
+
+  it('renders runs from before Stage 9 without the new cards', () => {
+    render(<RunView ticker="AAPL" state={stateFrom(CONSENSUS_EVENTS, 'done')} />)
+    expect(screen.queryByRole('heading', { name: 'Risk Officer' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Data check/)).not.toBeInTheDocument()
+  })
 })

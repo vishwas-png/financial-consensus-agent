@@ -123,3 +123,11 @@ button { font: inherit; cursor: pointer; }
 .run-details caption { text-align: left; color: var(--muted); padding-bottom: 4px; }
 .run-details th, .run-details td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border); }
 .run-details td:last-child, .run-details th:last-child { text-align: right; }
+
+/* Risk Officer + Data Checker (Stage 9). Risk "high" is bad, unlike confidence "high". */
+.card-risk { border-left: 4px solid var(--warn); }
+.risk-high { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
+.risk-medium { color: var(--warn); }
+.risk-low { color: var(--muted); }
+.card-risk li .badge { margin-right: 4px; }
+.data-check { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 8px; }

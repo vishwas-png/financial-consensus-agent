@@ -1,5 +1,5 @@
 // Realistic run events, shaped exactly like the backend's SSE/REST payloads.
-import type { AnalystOutput, AuditorVerdict, CriticFeedback, RunEvent, RunMetrics } from '../api/types'
+import type { AnalystOutput, AuditorVerdict, CriticFeedback, DataCheck, RiskAssessment, RunEvent, RunMetrics } from '../api/types'
 
 const ts = '2026-10-10T08:00:00Z'
 
@@ -32,6 +32,26 @@ export const VERDICT_FLAGGED: AuditorVerdict = {
   notes: 'One period misread.',
 }
 
+export const RISK: RiskAssessment = {
+  key_risks: [
+    { risk: 'Single-source suppliers could disrupt iPhone supply.', severity: 'high', citation: 'AAPL-10K-2025-1A-023' },
+    { risk: 'A trailing P/E near 39 leaves little room for a growth miss.', severity: 'medium', citation: null },
+  ],
+  what_would_change_the_thesis: ['revenue_growth turns negative'],
+  overall_risk: 'medium',
+}
+
+export const DATA_CHECK: DataCheck = {
+  checks: [
+    { data_point: 'trailing_pe = 39.0', field: 'trailing_pe', claimed: 39, actual: 39.04, status: 'match' },
+    { data_point: 'revenue_growth = 16.4%', field: 'revenue_growth', claimed: 16.4, actual: 0.079, status: 'mismatch' },
+    { data_point: 'Strong brand', field: null, claimed: null, actual: null, status: 'not_checkable' },
+  ],
+  matched: 1,
+  mismatched: 1,
+  unchecked: 1,
+}
+
 export const FETCH: RunEvent = {
   id: 1, timestamp: ts, step: 'fetch_data',
   content: { company: 'Apple Inc.', price: 336.9, currency: 'USD', filing_excerpts: 8, filing_ids: ['AAPL-10K-2025-1A-023'] },
@@ -46,10 +66,12 @@ export const FORCED_EXIT_EVENTS: RunEvent[] = [
   { id: 5, timestamp: ts, step: 'analyst', content: { analyst_output: ANALYSIS_2 } },
   { id: 6, timestamp: ts, step: 'critic', content: { critic_feedback: OBJECTS } },
   { id: 7, timestamp: ts, step: 'consensus_check', content: { iteration_count: 2, forced_exit: true } },
-  { id: 8, timestamp: ts, step: 'auditor', content: { auditor_verdict: VERDICT_FLAGGED } },
+  { id: 8, timestamp: ts, step: 'risk_officer', content: { risk_assessment: RISK } },
+  { id: 9, timestamp: ts, step: 'auditor', content: { auditor_verdict: VERDICT_FLAGGED, data_check: DATA_CHECK } },
 ]
 
-/** One round, the critic agrees -> consensus -> auditor. */
+/** One round, the critic agrees -> consensus -> auditor. Shaped like a run from before Stage 9
+ *  (no risk_officer step, no data_check), so older runs in history keep rendering. */
 export const CONSENSUS_EVENTS: RunEvent[] = [
   FETCH,
   { id: 2, timestamp: ts, step: 'analyst', content: { analyst_output: ANALYSIS_1 } },

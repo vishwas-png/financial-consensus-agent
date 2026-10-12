@@ -23,6 +23,27 @@ export interface AuditorVerdict {
   notes: string
 }
 
+export interface RiskAssessment {
+  key_risks: { risk: string; severity: 'low' | 'medium' | 'high'; citation: string | null }[]
+  what_would_change_the_thesis: string[]
+  overall_risk: 'low' | 'medium' | 'high'
+}
+
+export interface DataPointCheck {
+  data_point: string
+  field: string | null
+  claimed: number | null
+  actual: number | null
+  status: 'match' | 'mismatch' | 'unknown_field' | 'not_checkable'
+}
+
+export interface DataCheck {
+  checks: DataPointCheck[]
+  matched: number
+  mismatched: number
+  unchecked: number
+}
+
 // ---------- Run events (one per graph step; streamed over SSE and stored in the DB) ----------
 
 export interface FetchDataContent {
@@ -46,7 +67,8 @@ export type RunEvent = EventBase &
     | { step: 'analyst'; content: { analyst_output: AnalystOutput } }
     | { step: 'critic'; content: { critic_feedback: CriticFeedback } }
     | { step: 'consensus_check'; content: { iteration_count: number; forced_exit: boolean } }
-    | { step: 'auditor'; content: { auditor_verdict: AuditorVerdict } }
+    | { step: 'risk_officer'; content: { risk_assessment: RiskAssessment } }
+    | { step: 'auditor'; content: { auditor_verdict: AuditorVerdict; data_check?: DataCheck | null } }
     | { step: 'error'; content: { message: string; type?: string } }
   )
 
@@ -63,6 +85,8 @@ export interface FinalOutput {
   analyst_output: AnalystOutput | null
   critic_feedback: CriticFeedback | null
   auditor_verdict: AuditorVerdict | null
+  risk_assessment?: RiskAssessment | null
+  data_check?: DataCheck | null
   filing_chunks: string[] // "[AAPL-10K-2025-1A-007] (Item 1A - Risk Factors) text..."
   market_snapshot: Record<string, unknown>
 }
