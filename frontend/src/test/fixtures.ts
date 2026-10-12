@@ -1,5 +1,5 @@
 // Realistic run events, shaped exactly like the backend's SSE/REST payloads.
-import type { AnalystOutput, AuditorVerdict, CriticFeedback, RunEvent } from '../api/types'
+import type { AnalystOutput, AuditorVerdict, CriticFeedback, RunEvent, RunMetrics } from '../api/types'
 
 const ts = '2026-10-10T08:00:00Z'
 
@@ -62,3 +62,23 @@ export const EXCERPT_CHUNKS = [
   '[AAPL-10K-2025-1A-023] (Item 1A - Risk Factors) The Company obtains certain components from single or limited sources.',
   '[AAPL-10K-2025-7-015] (Item 7 - Management\'s Discussion and Analysis) During 2025, the Company repurchased $89.3 billion of its common stock.',
 ]
+
+/** Metrics as saved by the backend for a finished run (Stage 9). */
+export const METRICS: RunMetrics = {
+  total_seconds: 95.04,
+  llm_calls: 4,
+  llm_retries: 2,
+  prompt_tokens: 12000,
+  completion_tokens: 1500,
+  tokens_by_model: { 'openai/gpt-oss-120b': 13500 },
+  embedding_calls: 3,
+  embedded_texts: 230,
+  filing_ingest: { ticker: 'AAPL', chunks: 139, total_seconds: 28.9, download_seconds: 1, parse_seconds: 0.8, chunk_seconds: 7.6, embed_seconds: 19.5 },
+  steps: [
+    { step: 'fetch_data', seconds: 31.2 },
+    { step: 'analyst', seconds: 22.5 },
+    { step: 'critic', seconds: 18.0 },
+    { step: 'consensus_check', seconds: 0.01 },
+    { step: 'auditor', seconds: 23.3 },
+  ],
+}

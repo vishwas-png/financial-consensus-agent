@@ -53,8 +53,18 @@ function DataCard({ ticker, data }: { ticker: string; data: FetchDataContent }) 
       <p>
         Price {price} · {data.filing_excerpts} excerpts from the latest 10-K
       </p>
+      {data.filing_status && data.filing_status !== 'found' && (
+        <p className="muted">{FILING_STATUS_NOTES[data.filing_status]}</p>
+      )}
     </section>
   )
+}
+
+// Shown when a run has no 10-K evidence, so the reader knows the debate used market data only
+const FILING_STATUS_NOTES: Record<'empty' | 'unavailable' | 'timeout', string> = {
+  empty: 'No 10-K text was found for this company, so the agents used market data only.',
+  unavailable: 'The 10-K could not be loaded right now, so the agents used market data only.',
+  timeout: 'Indexing the 10-K took too long, so this run used market data only. The next run should have it.',
 }
 
 function RoundSection({ round, excerpts }: { round: Round; excerpts: Excerpts }) {

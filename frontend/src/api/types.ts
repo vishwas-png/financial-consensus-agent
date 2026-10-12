@@ -31,6 +31,8 @@ export interface FetchDataContent {
   currency: string | null
   filing_excerpts: number
   filing_ids: string[]
+  /** Why there are (or aren't) excerpts. Missing on runs from before Stage 9. */
+  filing_status?: 'found' | 'empty' | 'unavailable' | 'timeout' | null
 }
 
 interface EventBase {
@@ -77,7 +79,30 @@ export interface RunDetail {
   status: RunStatus
   created_at: string
   final_output: FinalOutput | null
+  metrics?: RunMetrics | null
   events: RunEvent[]
+}
+
+/** Observability for one run (backend/src/observability.py). Missing on runs from before Stage 9. */
+export interface RunMetrics {
+  total_seconds: number | null
+  llm_calls: number
+  llm_retries: number
+  prompt_tokens: number
+  completion_tokens: number
+  tokens_by_model: Record<string, number>
+  embedding_calls: number
+  embedded_texts: number
+  filing_ingest: {
+    ticker: string
+    chunks: number
+    total_seconds: number
+    download_seconds: number
+    parse_seconds: number
+    chunk_seconds: number
+    embed_seconds: number
+  } | null
+  steps: { step: string; seconds: number; ticker?: string }[]
 }
 
 export interface RunSummary {

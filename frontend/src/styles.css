@@ -113,3 +113,13 @@ button { font: inherit; cursor: pointer; }
 @media (max-width: 560px) {
   .history-row { grid-template-columns: auto 1fr; }
 }
+
+/* Run details (Stage 9 observability) */
+.run-details summary { cursor: pointer; font-weight: 600; }
+.run-details dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 12px 0; }
+.run-details dt { color: var(--muted); }
+.run-details dd { margin: 0; overflow-wrap: anywhere; }
+.run-details table { border-collapse: collapse; width: 100%; max-width: 420px; }
+.run-details caption { text-align: left; color: var(--muted); padding-bottom: 4px; }
+.run-details th, .run-details td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border); }
+.run-details td:last-child, .run-details th:last-child { text-align: right; }

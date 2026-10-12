@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { RunEvent } from '../api/types'
-import { CONSENSUS_EVENTS, EXCERPT_CHUNKS, FORCED_EXIT_EVENTS } from '../test/fixtures'
+import { CONSENSUS_EVENTS, EXCERPT_CHUNKS, FETCH, FORCED_EXIT_EVENTS } from '../test/fixtures'
 import { initialRunState, parseExcerpts, runReducer } from './runReducer'
 import { RunView } from './RunView'
 
@@ -61,5 +61,20 @@ describe('RunView', () => {
     const failed = stateFrom([CONSENSUS_EVENTS[0], { id: 2, timestamp: 't', step: 'error', content: { message: 'The AI service is busy (rate limited).' } }], 'failed')
     render(<RunView ticker="AAPL" state={failed} />)
     expect(screen.getByRole('alert')).toHaveTextContent('rate limited')
+  })
+
+  it.each([
+    ['timeout', /took too long/],
+    ['unavailable', /could not be loaded/],
+    ['empty', /No 10-K text was found/],
+  ] as const)('explains a missing 10-K (%s)', (filingStatus, note) => {
+    const fetch = { ...FETCH, content: { ...FETCH.content, filing_excerpts: 0, filing_ids: [], filing_status: filingStatus } } as RunEvent
+    render(<RunView ticker="AAPL" state={stateFrom([fetch])} />)
+    expect(screen.getByText(note)).toBeInTheDocument()
+  })
+
+  it('adds no note when excerpts were found (or the run predates filing_status)', () => {
+    render(<RunView ticker="AAPL" state={stateFrom([FETCH])} />)
+    expect(screen.queryByText(/market data only/)).not.toBeInTheDocument()
   })
 })

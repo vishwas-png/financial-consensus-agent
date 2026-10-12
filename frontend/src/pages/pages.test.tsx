@@ -6,7 +6,7 @@ import type { RunEvent } from '../api/types'
 import { AppRoutes } from '../App'
 import { AuthProvider } from '../auth/AuthProvider'
 import { clearToken, saveToken } from '../auth/token'
-import { EXCERPT_CHUNKS, FORCED_EXIT_EVENTS } from '../test/fixtures'
+import { EXCERPT_CHUNKS, FORCED_EXIT_EVENTS, METRICS } from '../test/fixtures'
 import { makeToken } from '../test/tokens'
 import { HistoryPage } from './HistoryPage'
 import { NewResearchPage } from './NewResearchPage'
@@ -131,7 +131,9 @@ describe('RunPage', () => {
     let getCount = 0
     routes['GET /research/run-1'] = () => {
       getCount += 1
-      return json(200, getCount === 1 ? detail('running') : detail('done', { filing_chunks: EXCERPT_CHUNKS }))
+      return json(200, getCount === 1
+        ? detail('running')
+        : { ...detail('done', { filing_chunks: EXCERPT_CHUNKS }), metrics: METRICS })
     }
     routes['GET /research/run-1/stream'] = () => sseResponse(FORCED_EXIT_EVENTS)
     renderAt('/runs/run-1', <RunPage />, '/runs/:runId')
@@ -145,6 +147,8 @@ describe('RunPage', () => {
     const round1 = screen.getByRole('region', { name: 'Round 1' })
     await userEvent.click(within(round1).getByRole('button', { name: 'AAPL-10K-2025-1A-023' }))
     expect(within(round1).getByText(/single or limited sources/)).toBeInTheDocument()
+
+    expect(screen.getByText('Run details')).toBeInTheDocument() // metrics panel once finished
 
     const stream = calls.find((c) => c.key === 'GET /research/run-1/stream')!
     expect(new Headers(stream.init?.headers).get('Authorization')).toMatch(/^Bearer /)

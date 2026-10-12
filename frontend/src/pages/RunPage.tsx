@@ -11,6 +11,7 @@ import { useApi } from '../api/useApi'
 import { useAuth } from '../auth/context'
 import { API_URL } from '../config'
 import { initialRunState, parseExcerpts, runReducer } from '../runs/runReducer'
+import { RunDetails } from '../runs/RunDetails'
 import { RunView } from '../runs/RunView'
 
 export function RunPage() {
@@ -64,6 +65,7 @@ export function RunPage() {
     <main>
       <h1>Research: {detail?.ticker ?? '…'}</h1>
       <RunView ticker={detail?.ticker ?? ''} state={state} excerpts={excerpts} />
+      {state.finished && detail?.metrics && <RunDetails metrics={detail.metrics} />}
       {state.finished && (
         <p>
           <Link to="/">Start another run</Link> · <Link to="/history">History</Link>
