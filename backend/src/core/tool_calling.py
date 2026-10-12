@@ -12,8 +12,8 @@ import yfinance as yf
 
 from src.clients.groq_client import GroqClient, LLMError
 from src.config import TOOL_CALL_MODEL
-from src.core.prompts import TICKER_EXTRACTION_PROMPT
-from src.core.schemas import MarketDataToolInput, TickerExtraction
+from src.core.prompts import TICKER_EXTRACTION_PROMPT, TICKER_LIST_EXTRACTION_PROMPT
+from src.core.schemas import MarketDataToolInput, TickerExtraction, TickerListExtraction
 from src.core.structured_output import ToolCallError, call_with_schema
 from src.tools.market_data import MarketDataError, fetch_market_data
 
@@ -45,6 +45,33 @@ def extract_ticker(user_request: str, client: GroqClient) -> MarketDataToolInput
     if extraction.no_us_listing or extraction.ticker is None:
         raise NoUSListingError("The company in the request has no US stock listing")
     return MarketDataToolInput(ticker=extraction.ticker)
+
+
+COMPARISON_TOOL_NAME = "get_market_data_for_comparison"
+COMPARISON_TOOL_DESCRIPTION = "Fetch market data snapshots for 2 or 3 US stock tickers to compare them."
+
+
+def extract_tickers(user_request: str, client: GroqClient) -> list[str]:
+    """Ask the LLM which 2-3 tickers a comparison request means (Stage 9).
+
+    Raises NoUSListingError if one of the companies has no US listing, and ToolCallError if
+    the model can't produce 2-3 distinct valid tickers after the repair attempt.
+    """
+    messages = [
+        {"role": "system", "content": TICKER_LIST_EXTRACTION_PROMPT},
+        {"role": "user", "content": user_request},
+    ]
+    extraction = call_with_schema(
+        client,
+        messages,
+        schema=TickerListExtraction,
+        tool_name=COMPARISON_TOOL_NAME,
+        description=COMPARISON_TOOL_DESCRIPTION,
+        model=TOOL_CALL_MODEL,
+    )
+    if extraction.no_us_listing:
+        raise NoUSListingError("A company in the comparison has no US stock listing")
+    return extraction.tickers
 
 
 def research_request_to_market_data(

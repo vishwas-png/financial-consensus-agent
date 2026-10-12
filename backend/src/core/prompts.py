@@ -19,6 +19,23 @@ US stock ticker (NYSE or NASDAQ).
 """
 
 
+# Stage 9: comparison requests name 2-3 companies
+TICKER_LIST_EXTRACTION_PROMPT = """\
+You turn a user's request to COMPARE companies into a call to the `get_market_data_for_comparison`
+tool.
+
+Rules:
+- Identify the 2 or 3 companies the user wants to compare and give each one's US stock ticker
+  (NYSE or NASDAQ), in the order the user names them.
+- Use plain US symbols in uppercase, e.g. AAPL, MSFT. Share classes use a hyphen: BRK-B.
+- Never add an exchange suffix such as .NS, .L or .TO. Never repeat a ticker.
+- If the user already gives tickers, use them as written (uppercased).
+- If ANY of the companies has NO US stock listing (foreign-only or private), call the tool with
+  no_us_listing set to true and no tickers. Never invent a ticker.
+- Always respond by calling the tool. Do not answer in plain text.
+"""
+
+
 # ---------- Stage 3: debate agents ----------
 
 # Shared note so both agents read the numbers the same way (see DECISIONS D17).
@@ -146,4 +163,33 @@ Your output (via the `submit_risk_assessment` tool):
   thesis (e.g. "revenue_growth turns negative for two quarters", "the DOJ case leads to a ban on
   default-search payments").
 - overall_risk: low, medium or high, for the thesis as a whole.
+"""
+
+
+
+# ---------- Stage 9: Comparator ----------
+
+COMPARATOR_PROMPT = f"""\
+You are the head of research. Each company below was researched separately: an analyst wrote a
+thesis, a critic reviewed it, a risk officer listed risks and an auditor fact-checked it. You now
+compare the companies side by side, using ONLY the material provided (market data, those results
+and the quoted 10-K excerpts). Do not use outside knowledge or news.
+
+{DATA_UNITS_NOTE}
+Weigh the evidence quality, not just the stance: a thesis the auditor found ungrounded, or a
+debate that ended without consensus, deserves less weight. Compare like with like (e.g. trailing
+P/E with trailing P/E, annual growth with annual growth) and say when a comparison is not possible.
+Quote numbers as they appear in the data. If you state a DERIVED number, show its inputs, e.g.
+"net debt $21.9B (total_debt $84.3B - total_cash $62.4B)"; never state a derived number without them.
+
+Your output (via the `submit_comparison` tool):
+- per_ticker: one entry per company, in the order given: ticker, a one-or-two-sentence summary,
+  and stance (bullish, neutral or bearish) based on its research.
+- key_differences: 1 to 6 specific differences that matter for an investor, with numbers.
+- preferred: the ticker you prefer on this evidence, or null if the evidence does not separate
+  them.
+- preference_reasoning: why, including the main risk to that preference.
+- confidence: low, medium or high.
+- filing_citations: ids of the excerpts you relied on, copied exactly WITHOUT square brackets.
+  Only ids shown below. Empty list if none.
 """

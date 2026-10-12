@@ -129,3 +129,55 @@ class TickerExtraction(BaseModel):
             raise ValueError("give a ticker, or set no_us_listing to true if the company has no US listing")
         self.ticker = MarketDataToolInput(ticker=self.ticker).ticker  # same rules as the tool input
         return self
+
+
+# ---------- Stage 9: multi-ticker comparison ----------
+
+MIN_COMPARE_TICKERS = 2
+MAX_COMPARE_TICKERS = 3
+
+
+class TickerListExtraction(BaseModel):
+    """Extraction for a comparison request: 2-3 distinct US tickers, OR "no US listing"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tickers: list[str] = Field(default_factory=list)
+    no_us_listing: bool = False
+
+    @model_validator(mode="after")
+    def check_tickers(self) -> "TickerListExtraction":
+        if self.no_us_listing:
+            self.tickers = []
+            return self
+        unique: list[str] = []
+        for ticker in self.tickers:
+            symbol = MarketDataToolInput(ticker=ticker).ticker  # same rules as a single ticker
+            if symbol not in unique:
+                unique.append(symbol)
+        if not MIN_COMPARE_TICKERS <= len(unique) <= MAX_COMPARE_TICKERS:
+            raise ValueError(f"give {MIN_COMPARE_TICKERS} to {MAX_COMPARE_TICKERS} different tickers "
+                             f"(got {len(unique)}), or set no_us_listing to true if one has no US listing")
+        self.tickers = unique
+        return self
+
+
+class TickerSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str
+    summary: str
+    stance: Literal["bullish", "neutral", "bearish"]
+
+
+class ComparisonOutput(BaseModel):
+    """The Comparator agent's side-by-side verdict across 2-3 researched tickers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    per_ticker: list[TickerSummary] = Field(min_length=MIN_COMPARE_TICKERS, max_length=MAX_COMPARE_TICKERS)
+    key_differences: list[str] = Field(min_length=1, max_length=6)
+    preferred: str | None = None     # the ticker preferred on the evidence, or null for no preference
+    preference_reasoning: str
+    confidence: Literal["low", "medium", "high"]
+    filing_citations: list[str] = Field(default_factory=list)
