@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "extraction_cases": [
   {
    "id": "extract-apple-plain",
@@ -41,7 +41,10 @@
     ],
     "reasoning": "Margins and free cash flow are strong and fund large buybacks and dividends (AAPL-10K-2025-7-015). Growth is moderate at about 6% a year, so the stock is not cheap. A key risk is supply concentration: some components come from single or limited sources (AAPL-10K-2025-1A-023).",
     "confidence": "medium",
-    "filing_citations": ["AAPL-10K-2025-7-015", "AAPL-10K-2025-1A-023"]
+    "filing_citations": [
+     "AAPL-10K-2025-7-015",
+     "AAPL-10K-2025-1A-023"
+    ]
    },
    "expected_is_grounded": true,
    "planted_claims": [],
@@ -63,7 +66,9 @@
     "filing_citations": []
    },
    "expected_is_grounded": false,
-   "planted_claims": ["45.2"],
+   "planted_claims": [
+    "45.2"
+   ],
    "flaw": "wrong_number",
    "notes": "trailing_pe in the fixture is 38.635, not 45.2 (45.77 is price_to_book, a plausible mix-up). The other numbers are correct."
   },
@@ -79,10 +84,14 @@
     ],
     "reasoning": "A 32% dividend yield backed by over $100B of free cash flow makes Apple a standout for income investors (AAPL-10K-2025-7-015).",
     "confidence": "high",
-    "filing_citations": ["AAPL-10K-2025-7-015"]
+    "filing_citations": [
+     "AAPL-10K-2025-7-015"
+    ]
    },
    "expected_is_grounded": false,
-   "planted_claims": ["32%"],
+   "planted_claims": [
+    "32%"
+   ],
    "flaw": "unit_misread",
    "notes": "dividend_yield_pct = 0.32 means 0.32%, not 32% (units note). The $0.26 quarterly dividend and FCF are correct."
   },
@@ -101,7 +110,9 @@
     "filing_citations": []
    },
    "expected_is_grounded": false,
-   "planted_claims": ["16.4%"],
+   "planted_claims": [
+    "16.4%"
+   ],
    "flaw": "period_misread",
    "notes": "revenue_growth = 0.164 is the latest QUARTER year-over-year; annual growth from annual_financials is about 6.4%. The same mistake was made by the live analyst in Stage 3 (DEVLOG). Net income FY2025 = 112,010,000,000 is correct."
   },
@@ -116,10 +127,14 @@
     ],
     "reasoning": "Segment data shows broad international strength, with Greater China net sales up 12% (AAPL-10K-2025-7-005) and Europe up 10% (AAPL-10K-2025-7-005).",
     "confidence": "medium",
-    "filing_citations": ["AAPL-10K-2025-7-005"]
+    "filing_citations": [
+     "AAPL-10K-2025-7-005"
+    ]
    },
    "expected_is_grounded": false,
-   "planted_claims": ["Greater China"],
+   "planted_claims": [
+    "Greater China"
+   ],
    "flaw": "citation_unsupported",
    "notes": "Excerpt 7-005 only contains the Americas ($178,353M, +7%) and Europe ($111,032M, +10%) rows; Greater China is not in the evidence, so the cited excerpt does not support that claim. The Europe claim is correct."
   },
@@ -137,7 +152,9 @@
     "filing_citations": []
    },
    "expected_is_grounded": false,
-   "planted_claims": ["foldable"],
+   "planted_claims": [
+    "foldable"
+   ],
    "flaw": "outside_knowledge",
    "notes": "No product launch plans appear anywhere in the market data or the 8 excerpts; the claim relies on outside knowledge and is unsupported regardless of whether it is true. The revenue numbers are correct."
   },
@@ -185,6 +202,124 @@
    "expected_sector": "Financial Services",
    "max_iterations": 2,
    "notes": "A bank: different 10-K structure and metrics (no free cash flow in the usual sense); tests robustness outside tech."
+  }
+ ],
+ "data_check_cases": [
+  {
+   "id": "dc-pe-rounded",
+   "data_point": "trailing_pe = 38.6",
+   "expected_status": "match",
+   "notes": "38.635 rounded to one decimal.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-market-cap-suffix",
+   "data_point": "market_cap = $4.92T",
+   "expected_status": "match",
+   "notes": "Trillion suffix and dollar sign.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-growth-percent",
+   "data_point": "revenue_growth = 16.4% (quarterly YoY)",
+   "expected_status": "match",
+   "notes": "Fraction field written as a percentage.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-fcf-about",
+   "data_point": "free_cash_flow = about $107.7B",
+   "expected_status": "match",
+   "notes": "Words around the number.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-annual-net-income",
+   "data_point": "net_income (FY2025) = $112.0B",
+   "expected_status": "match",
+   "notes": "Matches an annual_financials row, not the trailing financials.net_income.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-debt-to-equity",
+   "data_point": "debt_to_equity = 78.4",
+   "expected_status": "match",
+   "notes": "yfinance reports this as a percentage-like number (78.4 = 0.784x).",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-dividend-pct-correct",
+   "data_point": "dividend_yield_pct = 0.32%",
+   "expected_status": "match",
+   "notes": "_pct fields are already percentages.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-dividend-scale-error",
+   "data_point": "dividend_yield_pct = 32%",
+   "expected_status": "mismatch",
+   "notes": "The classic unit misread from the judge set: 0.32% stated as 32%.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-pe-wrong",
+   "data_point": "trailing_pe = 45",
+   "expected_status": "mismatch",
+   "notes": "Same wrong number as judge-wrong-number.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-revenue-wrong",
+   "data_point": "total_revenue = $500B",
+   "expected_status": "mismatch",
+   "notes": "Matches neither the trailing nor any annual revenue.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-unknown-field",
+   "data_point": "operating_margin = 30%",
+   "expected_status": "unknown_field",
+   "notes": "Field not in the market data.",
+   "fixture": "aapl_snapshot.json"
+  },
+  {
+   "id": "dc-prose",
+   "data_point": "Services revenue keeps growing",
+   "expected_status": "not_checkable",
+   "notes": "No field = value form; left to the Auditor.",
+   "fixture": "aapl_snapshot.json"
+  }
+ ],
+ "risk_cases": [
+  {
+   "id": "risk-after-consensus",
+   "fixture": "aapl_snapshot.json",
+   "analysis_from": "judge-grounded-full",
+   "forced_exit": false,
+   "critic_objections": [],
+   "expect_any_keyword": [
+    "supplier",
+    "single",
+    "limited source",
+    "valuation",
+    "multiple",
+    "pe"
+   ],
+   "notes": "Fairly-valued thesis after consensus: expect filing-backed risks (supply concentration) or valuation risk; every citation must be a provided excerpt id."
+  },
+  {
+   "id": "risk-after-forced-exit",
+   "fixture": "aapl_snapshot.json",
+   "analysis_from": "judge-grounded-full",
+   "forced_exit": true,
+   "critic_objections": [
+    "The thesis ignores that revenue_growth (16.4%) is a quarterly figure while annual growth was about 6%."
+   ],
+   "expect_any_keyword": [
+    "growth",
+    "revenue"
+   ],
+   "notes": "Unresolved objection about growth: it should surface as a risk or a thesis-changing condition."
   }
  ]
 }

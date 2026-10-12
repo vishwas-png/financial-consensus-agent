@@ -14,7 +14,8 @@ from src.core.schemas import AnalystOutput, AuditorVerdict, CriticFeedback
 from src.core.state import GraphState
 from src.core.tool_calling import MARKET_DATA_TOOL_NAME
 from src.tools.market_data import TickerNotFoundError
-from tests.fakes import ToolRoutingClient
+from src.core.nodes.risk_officer import RISK_OFFICER_TOOL_NAME
+from tests.fakes import ToolRoutingClient, low_risk_assessment
 from tests.test_market_data import FakeTicker
 
 
@@ -197,6 +198,7 @@ def test_pipeline_case_end_to_end_with_fakes() -> None:
         MARKET_DATA_TOOL_NAME: lambda n: {"ticker": "AAPL"},
         ANALYST_TOOL_NAME: lambda n: ANALYSIS,
         CRITIC_TOOL_NAME: lambda n: CriticFeedback(agrees=True, objections=[], missing_context=[]),
+        RISK_OFFICER_TOOL_NAME: low_risk_assessment,
         AUDITOR_TOOL_NAME: grounded_verdict,
     })
     result = run_pipeline_case(case, client, ticker_factory=lambda s: FakeTicker(), filing_retriever=lambda t: CHUNKS)
@@ -280,3 +282,36 @@ def test_calibration_report_perfect_judge(tmp_path) -> None:  # type: ignore[no-
     assert report["claim_recall"] == 1.0
     path = save_report(report, runs, results_dir=tmp_path)
     assert path.name.startswith("calibration_") and path.exists()
+
+
+# ---------- Stage 9: Data Checker and Risk Officer suites ----------
+
+def test_data_check_cases_all_agree_with_manual_labels() -> None:
+    # The Data Checker is deterministic, so its eval suite doubles as a regression test
+    from evals.runner import run_data_check_case
+
+    results = [run_data_check_case(case) for case in GOLDEN.data_check_cases]
+    assert len(results) >= 10
+    assert [r.case_id for r in results if not r.passed] == []
+
+
+def test_risk_cases_reference_existing_judge_analyses() -> None:
+    assert GOLDEN.risk_cases
+    for case in GOLDEN.risk_cases:
+        assert GOLDEN.judge_case(case.analysis_from).analysis.thesis
+
+
+def test_risk_case_checks_with_a_fake_client() -> None:
+    from evals.runner import run_risk_case
+
+    case = GOLDEN.risk_cases[0]
+    analysis = GOLDEN.judge_case(case.analysis_from).analysis
+    good = {"key_risks": [{"risk": "Single-source suppliers could disrupt supply.", "severity": "high",
+                           "citation": "AAPL-10K-2025-1A-023"}],
+            "what_would_change_the_thesis": ["margins fall"], "overall_risk": "medium"}
+    result = run_risk_case(case, analysis, ToolRoutingClient({RISK_OFFICER_TOOL_NAME: lambda n: good}))
+    assert result.passed, result.checks
+
+    off_topic = good | {"key_risks": [{"risk": "Weather.", "severity": "low", "citation": None}]}
+    result = run_risk_case(case, analysis, ToolRoutingClient({RISK_OFFICER_TOOL_NAME: lambda n: off_topic}))
+    assert result.checks == {"citations_valid": True, "cites_the_filing": False, "on_topic": False}
