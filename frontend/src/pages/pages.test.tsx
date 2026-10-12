@@ -6,7 +6,7 @@ import type { RunEvent } from '../api/types'
 import { AppRoutes } from '../App'
 import { AuthProvider } from '../auth/AuthProvider'
 import { clearToken, saveToken } from '../auth/token'
-import { EXCERPT_CHUNKS, FORCED_EXIT_EVENTS, METRICS } from '../test/fixtures'
+import { COMPARE_EVENTS, EXCERPT_CHUNKS, FORCED_EXIT_EVENTS, METRICS } from '../test/fixtures'
 import { makeToken } from '../test/tokens'
 import { HistoryPage } from './HistoryPage'
 import { NewResearchPage } from './NewResearchPage'
@@ -122,6 +122,33 @@ describe('NewResearchPage', () => {
 
 // ---------- Run page ----------
 
+describe('NewResearchPage compare mode', () => {
+  it('starts a comparison and navigates to it', async () => {
+    routes['GET /me'] = () => json(200, ME)
+    routes['POST /compare'] = () => json(202, { run_id: 'cmp-1', ticker: 'AAPL vs MSFT', status: 'pending' })
+    renderAt('/', <NewResearchPage />)
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Compare companies' }))
+    expect(screen.queryByLabelText('Maximum debate rounds')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Apple vs Microsoft' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Start comparison' }))
+
+    expect(await screen.findByText('Run page for test')).toBeInTheDocument()
+    const post = calls.find((c) => c.key === 'POST /compare')!
+    expect(JSON.parse(String(post.init?.body))).toEqual({ query: 'Apple vs Microsoft' })
+  })
+
+  it('shows the server explanation when companies are not recognised', async () => {
+    routes['GET /me'] = () => json(200, ME)
+    routes['POST /compare'] = () => json(422, { detail: "Couldn't identify 2 to 3 different US-listed companies." })
+    renderAt('/', <NewResearchPage />)
+    await userEvent.click(screen.getByRole('tab', { name: 'Compare companies' }))
+    await userEvent.type(screen.getByLabelText('Companies to compare (2 or 3)'), 'just Apple')
+    await userEvent.click(screen.getByRole('button', { name: 'Start comparison' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('2 to 3 different US-listed companies')
+  })
+})
+
 describe('RunPage', () => {
   const detail = (status: string, finalOutput: unknown = null) => ({
     id: 'run-1', ticker: 'AAPL', status, created_at: '2026-10-10T08:00:00Z', final_output: finalOutput, events: [],
@@ -154,6 +181,18 @@ describe('RunPage', () => {
     expect(new Headers(stream.init?.headers).get('Authorization')).toMatch(/^Bearer /)
   })
 
+  it('draws a comparison run with its verdict and company tabs', async () => {
+    const compareDetail = { ...detail('done'), id: 'cmp-1', ticker: 'AAPL vs MSFT', kind: 'compare', tickers: ['AAPL', 'MSFT'] }
+    routes['GET /research/cmp-1'] = () => json(200, compareDetail)
+    routes['GET /research/cmp-1/stream'] = () => sseResponse(COMPARE_EVENTS)
+    renderAt('/runs/cmp-1', <RunPage />, '/runs/:runId')
+
+    expect(await screen.findByRole('heading', { name: 'Comparison: AAPL vs MSFT' })).toBeInTheDocument()
+    expect(await screen.findByText('Higher margins at a lower multiple.')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'AAPL' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'MSFT' })).toBeInTheDocument()
+  })
+
   it('shows not found for an unknown or foreign run', async () => {
     renderAt('/runs/someone-elses', <RunPage />, '/runs/:runId')
     expect(await screen.findByRole('alert')).toHaveTextContent('Run not found.')
@@ -173,6 +212,16 @@ describe('HistoryPage', () => {
     expect(links.map((a) => a.getAttribute('href'))).toEqual(['/runs/run-2', '/runs/run-1'])
     expect(screen.getByText('Unresolved disagreement')).toBeInTheDocument()
     expect(screen.getByText('failed')).toBeInTheDocument()
+  })
+
+  it('labels comparison runs and shows their preference', async () => {
+    routes['GET /history'] = () => json(200, [
+      { id: 'cmp-1', ticker: 'AAPL vs MSFT', kind: 'compare', status: 'done', created_at: '2026-10-10T09:00:00Z', outcome: 'prefers MSFT', thesis: 'Higher margins.' },
+    ])
+    renderAt('/history', <HistoryPage />)
+    expect(await screen.findByText('AAPL vs MSFT')).toBeInTheDocument()
+    expect(screen.getByText('comparison')).toBeInTheDocument()
+    expect(screen.getByText('prefers MSFT')).toBeInTheDocument()
   })
 
   it('has an empty state', async () => {

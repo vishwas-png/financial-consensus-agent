@@ -1,5 +1,14 @@
 // Realistic run events, shaped exactly like the backend's SSE/REST payloads.
-import type { AnalystOutput, AuditorVerdict, CriticFeedback, DataCheck, RiskAssessment, RunEvent, RunMetrics } from '../api/types'
+import type {
+  AnalystOutput,
+  AuditorVerdict,
+  ComparisonOutput,
+  CriticFeedback,
+  DataCheck,
+  RiskAssessment,
+  RunEvent,
+  RunMetrics,
+} from '../api/types'
 
 const ts = '2026-10-10T08:00:00Z'
 
@@ -104,3 +113,26 @@ export const METRICS: RunMetrics = {
     { step: 'auditor', seconds: 23.3 },
   ],
 }
+
+/** A 2-company comparison run (Stage 9): AAPL's steps, then MSFT's, then the comparator. */
+export const COMPARISON: ComparisonOutput = {
+  per_ticker: [
+    { ticker: 'AAPL', summary: 'Premium multiple, strong cash flow.', stance: 'neutral' },
+    { ticker: 'MSFT', summary: 'Lower multiple, higher margins.', stance: 'bullish' },
+  ],
+  key_differences: ['Trailing P/E: AAPL 38.6 vs MSFT 29.8'],
+  preferred: 'MSFT',
+  preference_reasoning: 'Higher margins at a lower multiple.',
+  confidence: 'medium',
+  filing_citations: ['AAPL-10K-2025-1A-023'],
+}
+
+// TypeScript can't follow a spread across the RunEvent union, so the tag is added via `unknown`
+const tagged = (event: RunEvent, ticker: string, id: number): RunEvent =>
+  ({ ...event, id, content: { ...event.content, ticker } }) as unknown as RunEvent
+
+export const COMPARE_EVENTS: RunEvent[] = [
+  ...CONSENSUS_EVENTS.map((e, i) => tagged(e, 'AAPL', i + 1)),
+  ...CONSENSUS_EVENTS.map((e, i) => tagged(e, 'MSFT', i + 1 + CONSENSUS_EVENTS.length)),
+  { id: 2 * CONSENSUS_EVENTS.length + 1, timestamp: ts, step: 'comparator', content: { comparison: COMPARISON } },
+]

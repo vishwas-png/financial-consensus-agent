@@ -76,6 +76,8 @@ export function runReducer(state: RunViewState, action: RunAction): RunViewState
       return { ...next, risk: event.content.risk_assessment }
     case 'auditor':
       return { ...next, auditor: event.content.auditor_verdict, dataCheck: event.content.data_check ?? undefined }
+    case 'comparator':
+      return next // comparison-level step: handled by compareReducer
     case 'error':
       return { ...next, error: event.content.message }
   }

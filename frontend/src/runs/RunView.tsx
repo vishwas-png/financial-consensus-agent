@@ -12,10 +12,12 @@ interface RunViewProps {
   state: RunViewState
   /** Filing excerpt texts by id; available once the run has finished. */
   excerpts?: Excerpts
+  /** Off inside a comparison, which shows one activity line for the whole run. */
+  showActivity?: boolean
 }
 
-export function RunView({ ticker, state, excerpts = {} }: RunViewProps) {
-  const activity = currentActivity(state)
+export function RunView({ ticker, state, excerpts = {}, showActivity = true }: RunViewProps) {
+  const activity = showActivity ? currentActivity(state) : null
   const outcome = debateOutcome(state)
   return (
     <div className="run-view">

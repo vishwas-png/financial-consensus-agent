@@ -44,6 +44,15 @@ export interface DataCheck {
   unchecked: number
 }
 
+export interface ComparisonOutput {
+  per_ticker: { ticker: string; summary: string; stance: 'bullish' | 'neutral' | 'bearish' }[]
+  key_differences: string[]
+  preferred: string | null
+  preference_reasoning: string
+  confidence: 'low' | 'medium' | 'high'
+  filing_citations: string[]
+}
+
 // ---------- Run events (one per graph step; streamed over SSE and stored in the DB) ----------
 
 export interface FetchDataContent {
@@ -61,16 +70,25 @@ interface EventBase {
   timestamp: string
 }
 
+/** In a comparison run, every per-company step's content also says which company it is about. */
+type Tagged<T> = T & { ticker?: string }
+
 export type RunEvent = EventBase &
   (
-    | { step: 'fetch_data'; content: FetchDataContent }
-    | { step: 'analyst'; content: { analyst_output: AnalystOutput } }
-    | { step: 'critic'; content: { critic_feedback: CriticFeedback } }
-    | { step: 'consensus_check'; content: { iteration_count: number; forced_exit: boolean } }
-    | { step: 'risk_officer'; content: { risk_assessment: RiskAssessment } }
-    | { step: 'auditor'; content: { auditor_verdict: AuditorVerdict; data_check?: DataCheck | null } }
+    | { step: 'fetch_data'; content: Tagged<FetchDataContent> }
+    | { step: 'analyst'; content: Tagged<{ analyst_output: AnalystOutput }> }
+    | { step: 'critic'; content: Tagged<{ critic_feedback: CriticFeedback }> }
+    | { step: 'consensus_check'; content: Tagged<{ iteration_count: number; forced_exit: boolean }> }
+    | { step: 'risk_officer'; content: Tagged<{ risk_assessment: RiskAssessment }> }
+    | { step: 'auditor'; content: Tagged<{ auditor_verdict: AuditorVerdict; data_check?: DataCheck | null }> }
+    | { step: 'comparator'; content: { comparison: ComparisonOutput } }
     | { step: 'error'; content: { message: string; type?: string } }
   )
+
+/** Comparison runs tag each per-company step with its ticker (content.ticker). */
+export function eventTicker(event: RunEvent): string | null {
+  return 'ticker' in event.content ? (event.content.ticker ?? null) : null
+}
 
 export type StepName = RunEvent['step']
 
@@ -97,12 +115,25 @@ export interface RunCreated {
   status: RunStatus
 }
 
+/** final_output of a comparison run (backend: api/jobs.py comparison_final_output). */
+export interface CompareFinalOutput {
+  kind: 'compare'
+  tickers: string[]
+  comparison: ComparisonOutput | null
+  per_ticker: Record<string, FinalOutput>
+  filing_chunks: string[]
+}
+
+export type RunKind = 'single' | 'compare'
+
 export interface RunDetail {
   id: string
   ticker: string
+  kind?: RunKind
+  tickers?: string[] | null
   status: RunStatus
   created_at: string
-  final_output: FinalOutput | null
+  final_output: FinalOutput | CompareFinalOutput | null
   metrics?: RunMetrics | null
   events: RunEvent[]
 }
@@ -132,9 +163,11 @@ export interface RunMetrics {
 export interface RunSummary {
   id: string
   ticker: string
+  kind?: RunKind
   status: RunStatus
   created_at: string
-  outcome: FinalOutput['outcome'] | null
+  /** consensus / unresolved_disagreement, or for comparisons "prefers MSFT" / "no clear preference" */
+  outcome: FinalOutput['outcome'] | string | null
   thesis: string | null
 }
 
