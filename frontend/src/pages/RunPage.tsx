@@ -78,9 +78,14 @@ export function RunPage() {
         {isComparison ? 'Comparison' : 'Research'}: {detail?.ticker ?? '…'}
       </h1>
       {isComparison ? (
-        <CompareRunView tickers={detail?.tickers ?? []} state={compareState} excerpts={excerpts} />
+        <CompareRunView
+          tickers={detail?.tickers ?? []}
+          state={compareState}
+          excerpts={excerpts}
+          startedAt={detail?.created_at}
+        />
       ) : (
-        <RunView ticker={detail?.ticker ?? ''} state={state} excerpts={excerpts} />
+        <RunView ticker={detail?.ticker ?? ''} state={state} excerpts={excerpts} startedAt={detail?.created_at} />
       )}
       {finished && detail?.metrics && <RunDetails metrics={detail.metrics} />}
       {finished && (

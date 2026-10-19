@@ -97,4 +97,33 @@ describe('RunView', () => {
     expect(screen.queryByRole('heading', { name: 'Risk Officer' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Data check/)).not.toBeInTheDocument()
   })
+
+  it('puts the verdict first once finished, with the debate collapsed below the evidence', () => {
+    const { container } = render(<RunView ticker="AAPL" state={stateFrom(FORCED_EXIT_EVENTS, 'done')} />)
+    const order = [...container.querySelectorAll('.run-view > *')].map((el) => el.className.split(' ').slice(0, 2).join(' '))
+    expect(order).toEqual(['card verdict', 'pipeline', 'card card-data', 'card card-risk', 'card card-auditor', 'debate'])
+    expect(screen.getByText(/modestly overvalued/, { selector: '.verdict-thesis' })).toBeInTheDocument()
+    expect(container.querySelector('details.debate')).not.toHaveAttribute('open')
+    expect(screen.getByText('How the agents got here: 2 rounds, unresolved disagreement')).toBeInTheDocument()
+  })
+
+  it('opens the debate when its verdict tile is clicked', async () => {
+    const { container } = render(<RunView ticker="AAPL" state={stateFrom(FORCED_EXIT_EVENTS, 'done')} />)
+    await userEvent.click(screen.getByRole('link', { name: /Debate/ }))
+    expect(container.querySelector('details.debate')).toHaveAttribute('open')
+  })
+
+  it('while live: progress first, the debate open, no verdict yet', () => {
+    const { container } = render(<RunView ticker="AAPL" state={stateFrom(FORCED_EXIT_EVENTS.slice(0, 4))} />)
+    expect(container.querySelector('.run-view > *')).toHaveClass('pipeline')
+    expect(screen.queryByRole('heading', { name: 'Verdict' })).not.toBeInTheDocument()
+    expect(container.querySelector('details.debate')).toHaveAttribute('open')
+    expect(screen.getByText(/Analyst is revising \(round 2\)/)).toBeInTheDocument()
+  })
+
+  it('shows no verdict for a failed run', () => {
+    const failed = stateFrom([CONSENSUS_EVENTS[0], { id: 2, timestamp: 't', step: 'error', content: { message: 'busy' } }], 'failed')
+    render(<RunView ticker="AAPL" state={failed} />)
+    expect(screen.queryByRole('heading', { name: 'Verdict' })).not.toBeInTheDocument()
+  })
 })

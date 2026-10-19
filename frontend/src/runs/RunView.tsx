@@ -1,9 +1,14 @@
-// Draws a run: data card, one section per debate round, the outcome banner, the auditor's
-// verdict (or an error). Purely presentational: all logic lives in runReducer.ts.
+// Draws a run. Live: the progress pipeline on top, then the debate as it happens.
+// Finished: the verdict scorecard first, then the evidence (data, Risk Officer, Auditor), with
+// the debate rounds collapsed under "How the agents got here". Purely presentational: the
+// logic lives in runReducer.ts, pipeline.ts and verdict.ts.
 
 import { useState } from 'react'
 import type { AnalystOutput, AuditorVerdict, CriticFeedback, DataCheck, FetchDataContent, RiskAssessment } from '../api/types'
+import { PipelineProgress } from './PipelineProgress'
 import { currentActivity, debateOutcome, type Round, type RunViewState } from './runReducer'
+import { buildVerdict } from './verdict'
+import { VerdictCard } from './VerdictCard'
 
 type Excerpts = Record<string, { section: string; text: string }>
 
@@ -12,22 +17,65 @@ interface RunViewProps {
   state: RunViewState
   /** Filing excerpt texts by id; available once the run has finished. */
   excerpts?: Excerpts
-  /** Off inside a comparison, which shows one activity line for the whole run. */
-  showActivity?: boolean
+  /** Off inside a comparison, which shows one pipeline for the whole run. */
+  showProgress?: boolean
+  /** When the run started (server time), for the pipeline's timings. */
+  startedAt?: string
 }
 
-export function RunView({ ticker, state, excerpts = {}, showActivity = true }: RunViewProps) {
-  const activity = showActivity ? currentActivity(state) : null
+export function RunView({ ticker, state, excerpts = {}, showProgress = true, startedAt }: RunViewProps) {
   const outcome = debateOutcome(state)
-  return (
-    <div className="run-view">
-      {state.data && <DataCard ticker={ticker} data={state.data} />}
+  const verdict = buildVerdict(state)
+  const live = !state.finished && !state.error
+  // The debate is open while it happens and collapses once there is a verdict, unless the user
+  // opens it. It is ONE element for the whole run, so open citations survive the switch.
+  const [debateExpanded, setDebateExpanded] = useState(false)
+
+  const debate = (
+    <details
+      key="debate"
+      className="debate"
+      id="debate"
+      open={verdict ? debateExpanded : true}
+      onToggle={(event) => verdict && setDebateExpanded(event.currentTarget.open)}
+    >
+      <summary>
+        {verdict
+          ? `How the agents got here: ${state.rounds.length} round${state.rounds.length === 1 ? '' : 's'}, ${
+              outcome?.kind === 'consensus' ? 'consensus' : 'unresolved disagreement'
+            }`
+          : 'Debate'}
+      </summary>
       {state.rounds.map((round) => (
         <RoundSection key={round.number} round={round} excerpts={excerpts} />
       ))}
       {outcome && <OutcomeBanner kind={outcome.kind} rounds={outcome.rounds} />}
-      {state.risk && <RiskCard assessment={state.risk} excerpts={excerpts} />}
-      {state.auditor && <AuditorCard verdict={state.auditor} dataCheck={state.dataCheck} />}
+    </details>
+  )
+  const evidence = [
+    state.risk && <RiskCard key="risk" assessment={state.risk} excerpts={excerpts} />,
+    state.auditor && <AuditorCard key="auditor" verdict={state.auditor} dataCheck={state.dataCheck} />,
+  ]
+
+  // Keyed list: when the verdict arrives React MOVES these sections (results first) instead of
+  // re-creating them, so nothing the user opened is reset.
+  const sections = [
+    verdict && <VerdictCard key="verdict" verdict={verdict} />,
+    showProgress && (
+      <PipelineProgress
+        key="progress"
+        state={state}
+        startedAt={startedAt}
+        activity={live ? currentActivity(state) : null}
+      />
+    ),
+    state.data && <DataCard key="data" ticker={ticker} data={state.data} />,
+    ...(verdict ? [...evidence, state.rounds.length > 0 && debate] : [state.rounds.length > 0 && debate, ...evidence]),
+  ]
+
+  return (
+    <div className="run-view">
+      {sections}
       {state.error && (
         <section className="card card-error" role="alert">
           <h3>Run failed</h3>
@@ -36,11 +84,6 @@ export function RunView({ ticker, state, excerpts = {}, showActivity = true }: R
       )}
       {state.finished === 'timeout' && (
         <p className="muted">The live stream stopped waiting for this run. Reload the page later to see the result.</p>
-      )}
-      {activity && (
-        <p className="activity" aria-live="polite">
-          <span className="spinner" aria-hidden="true" /> {activity}
-        </p>
       )}
     </div>
   )
@@ -176,7 +219,7 @@ function OutcomeBanner({ kind, rounds }: { kind: 'consensus' | 'unresolved'; rou
 
 function RiskCard({ assessment, excerpts }: { assessment: RiskAssessment; excerpts: Excerpts }) {
   return (
-    <article className="card card-risk">
+    <article className="card card-risk" id="risk">
       <header>
         <h3>Risk Officer</h3>
         <span className={`badge risk-${assessment.overall_risk}`}>{assessment.overall_risk} overall risk</span>
@@ -232,7 +275,7 @@ function DataCheckSummary({ check }: { check: DataCheck }) {
 
 function AuditorCard({ verdict, dataCheck }: { verdict: AuditorVerdict; dataCheck?: DataCheck }) {
   return (
-    <article className={`card card-auditor ${verdict.is_grounded ? 'card-ok' : 'card-warn'}`}>
+    <article className={`card card-auditor ${verdict.is_grounded ? 'card-ok' : 'card-warn'}`} id="auditor">
       <header>
         <h3>Auditor (fact check)</h3>
         <span className={`badge ${verdict.is_grounded ? 'badge-ok' : 'badge-warn'}`}>

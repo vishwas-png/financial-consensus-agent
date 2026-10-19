@@ -35,6 +35,8 @@ describe('CompareRunView', () => {
     expect(screen.getByRole('tab', { name: 'MSFT' })).toBeDisabled()
     expect(screen.getByText(/AAPL: Critic is reviewing round 1/)).toBeInTheDocument()
     expect(screen.getAllByText(/Critic is reviewing/)).toHaveLength(1) // one activity line, not one per tab
+    expect(screen.getByRole('region', { name: 'AAPL · company 1 of 2' })).toBeInTheDocument() // its pipeline
+    expect(screen.getAllByRole('list').filter((l) => l.classList.contains('pipeline-steps'))).toHaveLength(1)
     expect(screen.queryByRole('heading', { name: 'Comparison' })).not.toBeInTheDocument()
   })
 
