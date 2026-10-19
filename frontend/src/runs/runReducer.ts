@@ -35,11 +35,19 @@ export interface RunViewState {
   finished: StreamEnd | null
   /** Highest event id applied; older/duplicate events are ignored (safe replay + resume). */
   lastEventId: number
+  /** When each step finished (server timestamps), in order: drives the progress pipeline's timings. */
+  stepTimes: { step: RunEvent['step']; at: string }[]
 }
 
 export type RunAction = { type: 'event'; event: RunEvent } | { type: 'end'; status: StreamEnd } | { type: 'reset' }
 
-export const initialRunState: RunViewState = { rounds: [], forcedExit: false, finished: null, lastEventId: 0 }
+export const initialRunState: RunViewState = {
+  rounds: [],
+  forcedExit: false,
+  finished: null,
+  lastEventId: 0,
+  stepTimes: [],
+}
 
 function updateLastRound(rounds: Round[], update: Partial<Round>): Round[] {
   if (rounds.length === 0) return rounds // critic/result before any analyst: ignore
@@ -53,7 +61,11 @@ export function runReducer(state: RunViewState, action: RunAction): RunViewState
 
   const event = action.event
   if (event.id <= state.lastEventId) return state // already applied
-  const next = { ...state, lastEventId: event.id }
+  const next = {
+    ...state,
+    lastEventId: event.id,
+    stepTimes: [...state.stepTimes, { step: event.step, at: event.timestamp }],
+  }
 
   switch (event.step) {
     case 'fetch_data':

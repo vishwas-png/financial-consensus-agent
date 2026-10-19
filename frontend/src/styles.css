@@ -141,3 +141,55 @@ button { font: inherit; cursor: pointer; }
 .card-comparison .per-ticker { list-style: none; padding-left: 0; }
 .card-comparison .per-ticker li { margin: 6px 0; }
 .badge-kind { margin-left: 8px; }
+
+/* Screen-reader-only text */
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Progress pipeline: Data -> Analyst -> Critic -> Consensus -> Risk Officer -> Auditor */
+.pipeline { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin: 10px 0; }
+.pipeline-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.pipeline-head .muted { font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.pipeline-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+.step { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; font-size: 0.85rem; min-width: 0; }
+.step:not(:first-child)::before { content: ''; position: absolute; top: 13px; right: 50%; width: 100%; height: 2px; background: var(--border); }
+.step-done:not(:first-child)::before, .step-active:not(:first-child)::before { background: var(--ok); }
+.step-icon { position: relative; z-index: 1; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--border); background: var(--surface); font-weight: 700; line-height: 1; }
+.step-label { font-weight: 600; overflow-wrap: anywhere; }
+.step-meta { color: var(--muted); font-size: 0.75rem; min-height: 1.1em; font-variant-numeric: tabular-nums; }
+.step-done .step-icon { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+.step-active .step-icon { color: var(--accent); border-color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.step-active .step-label { color: var(--accent); }
+.step-failed .step-icon { color: var(--error); border-color: var(--error); background: var(--error-bg); }
+.step-failed .step-label { color: var(--error); }
+.step-pending, .step-skipped { color: var(--muted); }
+.step-pending .step-label, .step-skipped .step-label { font-weight: 500; }
+.pipeline .activity { margin: 12px 0 0; }
+@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) { .step-active .step-icon { animation: none; } }
+@media (max-width: 480px) {
+  .pipeline { padding: 10px; }
+  .step { font-size: 0.72rem; }
+  .step-meta { font-size: 0.68rem; }
+}
+
+/* Verdict scorecard: the answer first */
+.verdict { border-left: 4px solid var(--accent); padding: 18px 20px; }
+.verdict .verdict-kicker { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 6px; }
+.verdict-thesis { font-size: 1.25rem; font-weight: 600; line-height: 1.35; margin: 0 0 14px; }
+.verdict-facts { list-style: none; padding: 0; margin: 0 0 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.fact { display: flex; flex-direction: column; gap: 2px; height: 100%; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: inherit; text-decoration: none; }
+.fact:hover, .fact:focus-visible { border-color: var(--accent); }
+.fact-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.fact-value { font-weight: 600; }
+.fact-value::first-letter { text-transform: uppercase; }
+.fact-ok { background: var(--ok-bg); border-color: transparent; }
+.fact-ok .fact-value { color: var(--ok); }
+.fact-warn { background: var(--warn-bg); border-color: transparent; }
+.fact-warn .fact-value { color: var(--warn); }
+.verdict-risk { margin: 0 0 6px; }
+.verdict-note { font-size: 0.8rem; margin: 0; }
+@media (max-width: 480px) { .verdict { padding: 14px; } .verdict-thesis { font-size: 1.1rem; } }
+
+/* Finished runs: the debate is collapsed under the verdict */
+.debate { margin: 16px 0; }
+.debate > summary { cursor: pointer; font-weight: 600; padding: 10px 0; }

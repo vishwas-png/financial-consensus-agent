@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import type { ComparisonOutput } from '../api/types'
 import { currentCompareActivity, type CompareViewState } from './compareReducer'
+import { PipelineProgress } from './PipelineProgress'
 import { RunView } from './RunView'
 
 type Excerpts = Record<string, { section: string; text: string }>
@@ -13,9 +14,19 @@ interface CompareRunViewProps {
   tickers: string[]
   state: CompareViewState
   excerpts?: Excerpts
+  /** When the comparison started (server time), for the pipeline's timings. */
+  startedAt?: string
 }
 
-export function CompareRunView({ tickers, state, excerpts = {} }: CompareRunViewProps) {
+/** When this company's research began: the run start, or when the previous company finished. */
+function companyStart(state: CompareViewState, ticker: string, runStart?: string): string | undefined {
+  const index = state.tickers.indexOf(ticker)
+  if (index <= 0) return runStart
+  const previous = state.perTicker[state.tickers[index - 1]]
+  return previous?.stepTimes[previous.stepTimes.length - 1]?.at
+}
+
+export function CompareRunView({ tickers, state, excerpts = {}, startedAt }: CompareRunViewProps) {
   // null = follow the company currently being researched; a click pins a tab
   const [pinned, setPinned] = useState<string | null>(null)
   const live = state.tickers[state.tickers.length - 1] ?? tickers[0]
@@ -31,10 +42,20 @@ export function CompareRunView({ tickers, state, excerpts = {} }: CompareRunView
           <p>{state.error}</p>
         </section>
       )}
-      {activity && (
-        <p className="activity" aria-live="polite">
-          <span className="spinner" aria-hidden="true" /> {activity}
-        </p>
+      {activity && state.perTicker[live] && activity.startsWith(`${live}:`) ? (
+        // A company is being researched: show its pipeline, like a single run
+        <PipelineProgress
+          state={state.perTicker[live]}
+          startedAt={companyStart(state, live, startedAt)}
+          title={`${live} · company ${tickers.indexOf(live) + 1} of ${tickers.length}`}
+          activity={activity}
+        />
+      ) : (
+        activity && (
+          <p className="activity" aria-live="polite">
+            <span className="spinner" aria-hidden="true" /> {activity}
+          </p>
+        )
       )}
       <div className="tabs" role="tablist" aria-label="Companies">
         {tickers.map((ticker) => (
@@ -55,7 +76,7 @@ export function CompareRunView({ tickers, state, excerpts = {} }: CompareRunView
       </div>
       {selected && state.perTicker[selected] && (
         <div role="tabpanel" id={`panel-${selected}`} aria-labelledby={`tab-${selected}`}>
-          <RunView ticker={selected} state={state.perTicker[selected]} excerpts={excerpts} showActivity={false} />
+          <RunView ticker={selected} state={state.perTicker[selected]} excerpts={excerpts} showProgress={false} />
         </div>
       )}
     </div>

@@ -547,3 +547,28 @@ Built in order 9a → 9b → 9c on branch `stage/9-extensions`, merged to `main`
 
 ### Status
 All planned stages (0-9) are complete. Known limitations are in the README; the DEVLOG (local) has every failure.
+
+## After Stage 9: run page redesign (owner request)
+
+### Plan (owner chose options #1 + #2 from the UI review)
+- **Verdict scorecard:** shown once a run has an audited final analysis. The thesis is the headline, followed by tiles for:
+  - debate outcome;
+  - confidence;
+  - fact check (Auditor);
+  - numbers (Data Checker);
+  - risk (Risk Officer).
+
+  Each tile links to its detail card. The debate rounds collapse under "How the agents got here".
+- **Progress pipeline:** Data → Analyst → Critic → Consensus → Risk Officer → Auditor.
+  - Each step is done, active, waiting, failed or skipped, with the time spent from event timestamps and a "round N" note.
+  - A live elapsed clock while running, and the total once finished.
+  - The activity text is an `aria-live` caption.
+  - In a comparison, one pipeline follows the company being researched.
+- **Scope:** frontend only. The logic lives in pure, tested modules (`runs/pipeline.ts`, `runs/verdict.ts`), and the components only draw. No new dependencies.
+
+### Built and tested
+- New files: `runs/pipeline.ts`, `runs/verdict.ts`, `runs/PipelineProgress.tsx`, `runs/VerdictCard.tsx`.
+- `runReducer` records each step's server timestamp (`stepTimes`).
+- `RunView` is results-first once finished, with one stable debate `<details>` element.
+- `CompareRunView` shows a per-company pipeline; `RunPage` passes the run's start time.
+- **Frontend:** 127 tests pass (32 new); type check, lint and build are clean.
